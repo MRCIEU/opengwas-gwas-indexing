@@ -141,17 +141,17 @@ if __name__ == '__main__':
     variants = ['7:105561135', '7:105561135-105563135', '1:1000000-11000500', '1:30000250-13000400', '2:1000000-10000500', '2:21000200-31000800', 'X:32000000-36000000']
 
     headers = {
-        'Authorization': 'Bearer ' + os.environ['API_JWT']
+        'X-TEST-MODE-KEY': os.environ['BENCHMARK_API_KEY']
     }
 
     # api
-    r0 = requests.post(os.environ['API_URL'] + "/associations", data={'id': gwas_ids, 'variant': variants}, headers=headers).json()
+    r0 = requests.post(os.environ['BENCHMARK_API_URL'] + "/associations", data={'id': gwas_ids, 'variant': variants}, headers=headers).json()
     r0 = sorted(r0, key=lambda x: x['position'])
 
     # pickle
     t0 = time.time()
     gq = GWASQuery()
-    gwasinfo = {r['id']: r for r in requests.post(os.environ['API_URL'] + "/gwasinfo", data={'id': gwas_ids}, headers=headers).json()}
+    gwasinfo = {r['id']: r for r in requests.post(os.environ['BENCHMARK_API_URL'] + "/gwasinfo", data={'id': gwas_ids}, headers=headers).json()}
     r1 = gq.query(gwasinfo, gwas_ids, variants)
     r1 = sorted(r1, key=lambda x: x['position'])
     print(time.time() - t0)

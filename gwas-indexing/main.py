@@ -32,7 +32,7 @@ class GWASIndexing:
         _env = os.environ['ENV']
         self.redis = redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=os.environ['REDIS_DB_TASKS'])
 
-        self.input_dir_local = os.environ['INPUT_DIR_LOCAL']
+        self.input_dir_local = os.environ['INPUT_DIR_VCF_' + _env]
         self.input_dir_temp = os.environ['INPUT_DIR_TEMP']
         self.temp_dir = os.environ['TEMP_DIR_BCF']
         self.output_dir = os.environ['OUTPUT_DIR']
@@ -40,7 +40,7 @@ class GWASIndexing:
         for p in [self.input_dir_temp, self.temp_dir, self.output_dir, self.output_path_index]:
             os.makedirs(p, exist_ok=True)
 
-        self.bcftools = os.environ['BCFTOOLS_BINARY']
+        self.bcftools = os.environ['BCFTOOLS_BINARY_' + _env]
 
         self.chunk_size = 10_000_000
 

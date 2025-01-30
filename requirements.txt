@@ -1,0 +1,17 @@
+certifi==2024.12.14
+cffi==1.17.1
+charset-normalizer==3.4.1
+circuitbreaker==2.0.0
+cryptography==44.0.0
+idna==3.10
+oci==2.143.1
+pycparser==2.22
+pyOpenSSL==24.3.0
+pysam==0.22.1
+python-dateutil==2.9.0.post0
+python-dotenv==1.0.1
+pytz==2025.1
+redis==5.2.1
+requests==2.32.3
+six==1.17.0
+urllib3==2.3.0

@@ -9,4 +9,4 @@ RUN python -m pip install -r /requirements.txt
 
 COPY ./gwas-indexing /gwas-indexing
 
-ENTRYPOINT ["python", "/gwas-indexing/main.py"]
+ENTRYPOINT ["python", "-m", "gwas-indexing.main"]

@@ -7,16 +7,13 @@ import pickle
 import redis
 import shutil
 import subprocess
-import sys
 import time
 
 from collections import defaultdict
 from dotenv import load_dotenv
 from multiprocessing import Process, Queue
-from pysam import VariantFile
+# from pysam import VariantFile
 from retry import retry
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from _oci import OCI
 

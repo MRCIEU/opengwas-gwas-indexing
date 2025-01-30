@@ -4,16 +4,16 @@ import logging
 import multiprocessing
 import os
 import pickle
-import redis
+# import redis
 import shutil
 import subprocess
 import time
 
 from collections import defaultdict
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 from multiprocessing import Process, Queue
 # from pysam import VariantFile
-from retry import retry
+# from retry import retry
 
 from _oci import OCI
 

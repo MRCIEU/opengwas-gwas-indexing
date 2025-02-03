@@ -231,7 +231,7 @@ class GWASIndexing:
             n_chunks = self.upload_files(gwas_id)
             self.cleanup(gwas_id)
         except Exception as e:
-            logging.debug(e)
+            logging.error(e)
             return False, 0
         return True, n_chunks
 
@@ -275,7 +275,7 @@ def file_upload_worker(gwas_id: str, proc_id: int, queue: multiprocessing.Queue)
     @retry(tries=-1, delay=3)
     def _upload(gwas_id, i, filename):
         oci_instance.object_storage_upload('data-chunks', f"{gwas_id}/{filename}", open(f"{output_dir}/{gwas_id}/{filename}", 'rb'))
-        logging.info(f"Uploading {gwas_id}, chunk {i}")
+        logging.debug(f"Uploading {gwas_id}, chunk {i}")
 
     while True:
         task = queue.get()

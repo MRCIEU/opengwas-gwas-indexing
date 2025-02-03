@@ -107,7 +107,7 @@ class GWASIndexing:
 
         ret = subprocess.call(cmd, shell=True)
         if ret != 0:
-            logging.error('FAILED bcftools query', gwas_id)
+            logging.error(f"FAILED bcftools query {gwas_id}")
             raise Exception(f"FAILED bcftools query {gwas_id}")
         logging.debug('Extracted', gwas_id)
         return temp_path
@@ -162,6 +162,10 @@ class GWASIndexing:
         :return: Number of chunks
         """
         file_list = os.listdir(f"{self.output_dir}/{gwas_id}")
+        if not file_list:
+            logging.error(f"FAILED No files found for {gwas_id}")
+            raise Exception(f"FAILED No files found for {gwas_id}")
+
         logging.debug('Uploading', gwas_id, len(file_list))
 
         n_workers = int(os.environ['N_PROC']) * 2

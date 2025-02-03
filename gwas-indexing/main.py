@@ -50,7 +50,7 @@ class GWASIndexing:
         :return: list of GWAS IDs
         """
         self.redis.select(int(os.environ['REDIS_DB_TASKS']))
-        tasks = self.redis.smembers('pending')
+        tasks = self.redis.smembers('gwas_pending')
         logging.info('Number of pending tasks: ' + str(len(tasks)))
         return [t.decode('ascii') for t in tasks]
 
@@ -195,19 +195,19 @@ class GWASIndexing:
 
     def report_task_status_to_redis(self, gwas_id: str, successful: bool, n_chunks: int) -> None:
         """
-        Remove a task from 'pending' and add it to 'completed' or 'failed'
+        Remove a task from 'gwas_pending' and add it to 'gwas_completed' or 'gwas_failed'
         :param gwas_id: the full GWAS ID
         :param successful: whether the task is successful or not
         :param n_docs: number of Elasticsearch documents
         :return: None
         """
         self.redis.select(int(os.environ['REDIS_DB_TASKS']))
-        self.redis.srem('pending', gwas_id)
+        self.redis.srem('gwas_pending', gwas_id)
         if successful:
-            self.redis.zadd('completed', {gwas_id: n_chunks})
+            self.redis.zadd('gwas_completed', {gwas_id: n_chunks})
             logging.info('Reported {} as completed with {} docs'.format(gwas_id, n_chunks))
         else:
-            self.redis.zadd('failed', {gwas_id: int(time.time())})
+            self.redis.zadd('gwas_failed', {gwas_id: int(time.time())})
             logging.info('Reported {} as failed'.format(gwas_id))
 
     def run_for_single_dataset(self, gwas_id) -> (bool, int):

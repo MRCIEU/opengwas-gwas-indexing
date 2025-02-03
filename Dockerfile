@@ -1,4 +1,3 @@
-# syntax = docker/dockerfile:1.12
 FROM python:3.11-alpine
 
 RUN apk add make gcc musl-dev zlib-dev xz-dev bzip2-dev curl-dev
@@ -6,7 +5,7 @@ RUN apk add make gcc musl-dev zlib-dev xz-dev bzip2-dev curl-dev
 RUN mkdir -p /bcftools && cd /bcftools && wget https://github.com/samtools/bcftools/releases/download/1.21/bcftools-1.21.tar.bz2 && tar -jxvf bcftools-1.21.tar.bz2 && cd bcftools-1.21 && make
 
 COPY ./requirements.txt /requirements.txt
-RUN --mount=type=cache,target=/root/.cache python -m pip install -r /requirements.txt
+RUN python -m pip install -r /requirements.txt
 
 COPY ./gwas-indexing _oci.py /gwas-indexing/
 

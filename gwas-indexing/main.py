@@ -92,7 +92,7 @@ class GWASIndexing:
         available_columns = next(vcf.fetch()).format.keys()
         if 'SS' in available_columns:
             cmd = (f"{self.bcftools} query -f'%CHROM %POS %ID %ALT %REF[ %AF %ES %SE %LP %SS]\n' {vcf_path}"
-                   f" | awk '{{logging.debug $1, $2, $3, $4, $5, $6, $7, $8, 10^-$9, $10}}'"
+                   f" | awk '{{print $1, $2, $3, $4, $5, $6, $7, $8, 10^-$9, $10}}'"
                    f" | grep -v inf | gzip -c > {temp_path}")
         else:
             vcf.seek(0)
@@ -102,10 +102,13 @@ class GWASIndexing:
             else:
                 SS = '.'
             cmd = (f"{self.bcftools} query -f'%CHROM %POS %ID %ALT %REF[ %AF %ES %SE %LP]\n' {vcf_path}"
-                   f" | awk '{{logging.debug $1, $2, $3, $4, $5, $6, $7, $8, 10^-$9, \"{SS}\"}}'"
+                   f" | awk '{{print $1, $2, $3, $4, $5, $6, $7, $8, 10^-$9, \"{SS}\"}}'"
                    f" | grep -v inf | gzip -c > {temp_path}")
 
-        subprocess.call(cmd, shell=True)
+        ret = subprocess.call(cmd, shell=True)
+        if ret != 0:
+            logging.error('FAILED bcftools query', gwas_id)
+            raise Exception(f"FAILED bcftools query {gwas_id}")
         logging.debug('Extracted', gwas_id)
         return temp_path
 

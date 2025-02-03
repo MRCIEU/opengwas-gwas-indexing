@@ -97,7 +97,7 @@ class GWASIndexing:
             vcf.seek(0)
             global_fields = [x for x in vcf.header.records if x.key == "SAMPLE"][0]
             if 'TotalControls' in global_fields.keys():
-                SS = int(global_fields['TotalControls']) + int(global_fields.get('TotalCases', 0))
+                SS = int(float(global_fields['TotalControls'])) + int(float(global_fields.get('TotalCases', 0)))
             else:
                 SS = '.'
             cmd = (f"{self.bcftools} query -f'%CHROM %POS %ID %ALT %REF[ %AF %ES %SE %LP]\n' {vcf_path}"

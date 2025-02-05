@@ -60,7 +60,7 @@ class GWASIndexing:
         :return: Full path to the .vcf.gz file
         """
         vcf_path = f"{self.input_dir_local}/{gwas_id}/{gwas_id}.vcf.gz"
-        logging.debug('Fetching', gwas_id)
+        logging.debug(f"Fetching {gwas_id}")
 
         if not os.path.exists(vcf_path) or not os.path.exists(vcf_path + '.tbi'):
             vcf_path = f"{self.input_dir_temp}/{gwas_id}"
@@ -85,7 +85,7 @@ class GWASIndexing:
         shutil.rmtree(temp_path, ignore_errors=True)
         os.makedirs(temp_path)
         temp_path = f"{temp_path}/{gwas_id}"
-        logging.debug('Extracting', gwas_id)
+        logging.debug(f"Extracting {gwas_id}")
 
         vcf = VariantFile(vcf_path)
         available_columns = next(vcf.fetch()).format.keys()
@@ -108,7 +108,7 @@ class GWASIndexing:
         if ret != 0:
             logging.error(f"FAILED bcftools query {gwas_id}")
             raise Exception(f"FAILED bcftools query {gwas_id}")
-        logging.debug('Extracted', gwas_id)
+        logging.debug(f"Extracted {gwas_id}")
         return temp_path
 
     def read_gwas(self, gwas_id: str, temp_path: str) -> dict:
@@ -118,7 +118,7 @@ class GWASIndexing:
         :return: Dictionary of GWAS data, by chromosome and then position prefix
         """
         gwas = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-        logging.debug('Reading bcf', gwas_id)
+        logging.debug(f"Reading bcf {gwas_id}")
         with gzip.open(temp_path) as f:
             for line in f:
                 l = ['' if x == '.' else x for x in line.rstrip().decode('utf-8').split(' ')]
@@ -128,7 +128,7 @@ class GWASIndexing:
             for pos_prefix in gwas[chr].keys():
                 gwas[chr][pos_prefix] = dict(sorted(gwas[chr][pos_prefix].items()))
             gwas[chr] = dict(sorted(gwas[chr].items()))
-        logging.debug('Read bcf', gwas_id)
+        logging.debug(f"Read bcf {gwas_id}")
         return dict(sorted(gwas.items()))
 
     def write_gwas(self, gwas_id, gwas: dict) -> None:
@@ -141,7 +141,7 @@ class GWASIndexing:
         output_path = f"{self.output_dir}/{gwas_id}"
         shutil.rmtree(output_path, ignore_errors=True)
         os.makedirs(output_path)
-        logging.debug('Writing', gwas_id)
+        logging.debug(f"Writing {gwas_id}")
 
         pos_prefix_index = collections.defaultdict(set)
         for chr in gwas.keys():
@@ -152,7 +152,7 @@ class GWASIndexing:
 
         with gzip.open(f"{self.output_path_index}/{gwas_id}", 'wb') as f:
             pickle.dump(pos_prefix_index, f)
-        logging.debug('Written', gwas_id)
+        logging.debug(f"Written {gwas_id}")
 
     def upload_files(self, gwas_id) -> int:
         """
@@ -165,7 +165,7 @@ class GWASIndexing:
             logging.error(f"FAILED No files found for {gwas_id}")
             raise Exception(f"FAILED No files found for {gwas_id}")
 
-        logging.debug('Uploading', gwas_id, len(file_list))
+        logging.debug(f"Uploading {gwas_id} {len(file_list)}")
 
         n_workers = int(os.environ['N_PROC']) * 2
 
@@ -185,7 +185,7 @@ class GWASIndexing:
 
         oci_instance.object_storage_upload('data-chunks', f"0_pos_prefix_indices_by_dataset/{gwas_id}", open(f"{self.output_path_index}/{gwas_id}", 'rb'))
 
-        logging.debug('Uploaded', gwas_id)
+        logging.debug(f"Uploaded {gwas_id}")
         return len(file_list)
 
     def cleanup(self, gwas_id: str) -> None:
@@ -194,7 +194,7 @@ class GWASIndexing:
         :param gwas_id: GWAS ID
         :return: None
         """
-        logging.debug('Cleaning up', gwas_id)
+        logging.debug(f"Cleaning up {gwas_id}")
         shutil.rmtree(f"{self.input_dir_temp}/{gwas_id}", ignore_errors=True)
         shutil.rmtree(f"{self.temp_dir}/{gwas_id}", ignore_errors=True)
         shutil.rmtree(f"{self.output_dir}/{gwas_id}", ignore_errors=True)
@@ -292,6 +292,7 @@ if __name__ == '__main__':
     while True:
         while len(gwas_ids := gi.list_pending_tasks_in_redis()) > 0:
             queue = Queue()
+            # gwas_ids = ['']
             for i, gwas_id in enumerate(gwas_ids):
                 queue.put((i, gwas_id))
             for _ in range(n_proc):

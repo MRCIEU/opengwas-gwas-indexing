@@ -143,20 +143,21 @@ class GWASIndexing:
         os.makedirs(output_path)
         logging.debug(f"Writing {gwas_id}")
 
-        pos_prefix_index = collections.defaultdict(set)
+        pos_prefix_index = collections.defaultdict(list)
         for chr in gwas.keys():
-            pos_prefix_index[chr] = set(gwas[chr].keys())
+            pos_prefix_index[chr] = list(set(gwas[chr].keys()))
             for pos_prefix in gwas[chr].keys():
                 with gzip.open(output_path + f"/{chr}_{pos_prefix}", 'wb') as f:
                     pickle.dump(gwas[chr][pos_prefix], f)
+        pos_prefix_index = dict(pos_prefix_index)
 
         with gzip.open(f"{self.output_path_index}/{gwas_id}", 'wb') as f:
             pickle.dump(pos_prefix_index, f)
         logging.debug(f"Written {gwas_id}")
 
-    def upload_files(self, gwas_id) -> int:
+    def save_chunks_and_index(self, gwas_id) -> int:
         """
-        Upload the GWAS chunks and the index file to OCI
+        Upload the GWAS chunks to OCI and save the index to Redis
         :param gwas_id: GWAS ID
         :return: Number of chunks
         """
@@ -184,6 +185,9 @@ class GWASIndexing:
             proc.join()
 
         oci_instance.object_storage_upload('data-chunks', f"0_pos_prefix_indices_by_dataset/{gwas_id}", open(f"{self.output_path_index}/{gwas_id}", 'rb'))
+
+        with gzip.open(f"{self.output_path_index}/{gwas_id}", 'rb') as f:
+            self.redis.hset('gwas_pos_prefix_indices', gwas_id, f.read())
 
         logging.debug(f"Uploaded {gwas_id}")
         return len(file_list)
@@ -227,7 +231,7 @@ class GWASIndexing:
             temp_path = self.extract_vcf(gwas_id, vcf_path)
             gwas = self.read_gwas(gwas_id, temp_path)
             self.write_gwas(gwas_id, gwas)
-            n_chunks = self.upload_files(gwas_id)
+            n_chunks = self.save_chunks_and_index(gwas_id)
             self.cleanup(gwas_id)
         except Exception as e:
             logging.error(e)

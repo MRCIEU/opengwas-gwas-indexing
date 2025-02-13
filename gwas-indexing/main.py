@@ -62,13 +62,14 @@ class GWASIndexing:
         logging.debug(f"Fetching {gwas_id}")
 
         if not os.path.exists(vcf_path) or not os.path.exists(vcf_path + '.tbi'):
-            vcf_path = f"{self.input_dir_temp}/{gwas_id}"
-            shutil.rmtree(vcf_path, ignore_errors=True)
-            os.makedirs(vcf_path)
+            dataset_path = f"{self.input_dir_temp}/{gwas_id}"
+            shutil.rmtree(dataset_path, ignore_errors=True)
+            os.makedirs(dataset_path)
+            vcf_path = f"{dataset_path}/{gwas_id}.vcf.gz"
             logging.debug('Downloading', gwas_id)
-            with open(f"{vcf_path}/{gwas_id}.vcf.gz", 'wb') as f:
+            with open(vcf_path, 'wb') as f:
                 f.write(oci_instance.object_storage_download('data', f"{gwas_id}/{gwas_id}.vcf.gz").data.content)
-            with open(f"{vcf_path}/{gwas_id}.vcf.gz.tbi", 'wb') as f:
+            with open(f"{vcf_path}.tbi", 'wb') as f:
                 f.write(oci_instance.object_storage_download('data', f"{gwas_id}/{gwas_id}.vcf.gz.tbi").data.content)
 
         return vcf_path

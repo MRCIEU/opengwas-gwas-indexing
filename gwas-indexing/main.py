@@ -1,4 +1,3 @@
-import collections
 import gzip
 import logging
 import multiprocessing
@@ -68,9 +67,9 @@ class GWASIndexing:
             os.makedirs(vcf_path)
             logging.debug('Downloading', gwas_id)
             with open(f"{vcf_path}/{gwas_id}.vcf.gz", 'wb') as f:
-                f.write(oci_instance.object_storage_download('data', f"{gwas_id}/{gwas_id}.vcf.gz").data)
+                f.write(oci_instance.object_storage_download('data', f"{gwas_id}/{gwas_id}.vcf.gz").data.content)
             with open(f"{vcf_path}/{gwas_id}.vcf.gz.tbi", 'wb') as f:
-                f.write(oci_instance.object_storage_download('data', f"{gwas_id}/{gwas_id}.vcf.gz.tbi").data)
+                f.write(oci_instance.object_storage_download('data', f"{gwas_id}/{gwas_id}.vcf.gz.tbi").data.content)
 
         return vcf_path
 
@@ -143,7 +142,7 @@ class GWASIndexing:
         os.makedirs(output_path)
         logging.debug(f"Writing {gwas_id}")
 
-        pos_prefix_index = collections.defaultdict(list)
+        pos_prefix_index = defaultdict(list)
         for chr in gwas.keys():
             pos_prefix_index[chr] = list(set(gwas[chr].keys()))
             for pos_prefix in gwas[chr].keys():

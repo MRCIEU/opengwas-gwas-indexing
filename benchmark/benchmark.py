@@ -2,8 +2,10 @@ import collections
 import gzip
 import os
 import pickle
+import io
 import shutil
 import time
+import uuid
 
 import requests
 
@@ -19,10 +21,13 @@ class GWASQuery:
     def __init__(self):
         self.oci = OCI()
 
-        self.temp_dir = os.environ['TEMP_DIR_QUERY']
+        self.temp_dir = f"{os.environ['TEMP_DIR_QUERY']}/{uuid.uuid4()}"
         os.makedirs(self.temp_dir, exist_ok=True)
 
-        self.chunk_size = 1_000_000
+        self.chunk_size = 10_000_000
+
+    def __del__(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def _convert_sample_size(self, size):
         if size == '':
@@ -47,7 +52,7 @@ class GWASQuery:
     def filter_chunks_available(self, pos_prefix_indices: dict, gwas_id: str, chr: str, pos_tuple: tuple[int]) -> set:
         chunks_available = set()
         for pos_prefix in range(pos_tuple[0] // self.chunk_size, pos_tuple[1] // self.chunk_size + 1):
-            if pos_prefix in pos_prefix_indices[gwas_id][chr]:
+            if chr in pos_prefix_indices[gwas_id] and pos_prefix in pos_prefix_indices[gwas_id][chr]:
                 chunks_available.add(pos_prefix)
         return chunks_available
 
@@ -64,10 +69,9 @@ class GWASQuery:
                 local_file_valid = False
             if not local_file_valid:
                 os.makedirs(f"{self.temp_dir}/{gwas_id}", exist_ok=True)
-                with gzip.open(chunk_path, 'wb+') as f:
+                with open(chunk_path, 'wb+') as f:
                     f.write(self.oci.object_storage_download('data-chunks', f"{gwas_id}/{chr}_{pos_prefix}").data.content)
-                    f.flush()
-                    f.seek(0)
+                with gzip.open(chunk_path, 'rb') as f:
                     associations_available = associations_available | pickle.load(f)
         return associations_available
 
@@ -80,20 +84,21 @@ class GWASQuery:
         associations = []
         for pos in pos_available:
             if pos_tuple[0] <= pos <= pos_tuple[1]:
-                associations.append({
-                    'id': gwas_id,
-                    'trait': gwasinfo[gwas_id]['trait'],
-                    'chr': chr,
-                    'position': pos,
-                    'rsid': associations_available[pos][0],
-                    'ea': associations_available[pos][1],
-                    'nea': associations_available[pos][2],
-                    'eaf': float(associations_available[pos][3]) if associations_available[pos][3] != '' else '',
-                    'beta': float(associations_available[pos][4]) if associations_available[pos][4] != '' else '',
-                    'se': float(associations_available[pos][5]) if associations_available[pos][5] != '' else '',
-                    'p': float(associations_available[pos][6]) if associations_available[pos][6] != '' else '',
-                    'n': self._convert_sample_size(associations_available[pos][7])
-                })
+                for assoc in associations_available[pos]:
+                    associations.append({
+                        'id': gwas_id,
+                        'trait': gwasinfo[gwas_id]['trait'],
+                        'chr': chr,
+                        'position': pos,
+                        'rsid': assoc[0],
+                        'ea': assoc[1],
+                        'nea': assoc[2],
+                        'eaf': float(assoc[3]) if assoc[3] != '' else '',
+                        'beta': float(assoc[4]) if assoc[4] != '' else '',
+                        'se': float(assoc[5]) if assoc[5] != '' else '',
+                        'p': float(assoc[6]) if assoc[6] != '' else '',
+                        'n': self._convert_sample_size(assoc[7])
+                    })
         return associations
 
     def query(self, gwasinfo: dict, gwas_ids: list[str], query: list[str]) -> list:
@@ -104,8 +109,8 @@ class GWASQuery:
             pos_tuple_list_by_chr[chr].append((int(pos_start), int(pos_end)))
         merged_pos_by_chr = self.merge_pos_ranges(pos_tuple_list_by_chr)
 
-        with gzip.open(f"{self.temp_dir}/0_pos_prefix_indices", 'rb') as f:
-            pos_prefix_indices = pickle.load(f)
+        with gzip.GzipFile(fileobj=io.BytesIO(OCI().object_storage_download('data-chunks', '0_pos_prefix_indices').data.content), mode='rb') as f:
+            pos_prefix_indices = pickle.loads(f.read())
             print('pos_prefix_indices read')
 
         result = []
@@ -118,19 +123,6 @@ class GWASQuery:
                     result.extend(associations)
         return result
 
-    def collect_pos_prefix_indices(self):
-        print('Collecting pos_prefix_indices')
-        pos_prefix_indices = {}
-        for object_path in self.oci.object_storage_list('data-chunks', '0_pos_prefix_indices_by_dataset/'):
-            gwas_id = object_path.split('/')[-1]
-            pos_prefix_indices[gwas_id] = pickle.loads(self.oci.object_storage_download('data-chunks', object_path).data.content)
-            print(gwas_id)
-        with gzip.open(f"{self.temp_dir}/0_pos_prefix_indices", 'wb') as f:
-            pickle.dump(pos_prefix_indices, f)
-            print('Written pos_prefix_indices')
-        self.oci.object_storage_upload('data-chunks', "0_pos_prefix_indices", gzip.open(f"{self.temp_dir}/0_pos_prefix_indices", 'rb'))
-        print('Uploaded pos_prefix_indices')
-        # shutil.rmtree(f"{self.temp_dir}", ignore_errors=True)
 
 if __name__ == '__main__':
     # gq = GWASQuery()
@@ -138,7 +130,8 @@ if __name__ == '__main__':
     # exit()
 
     gwas_ids = ['ieu-a-2']
-    variants = ['7:105561135', '7:105561135-105563135', '1:1000000-11000500', '1:30000250-13000400', '2:1000000-10000500', '2:21000200-31000800', 'X:32000000-36000000']
+    variants = ['7:105561135', '7:105561135-105563135']
+    # variants = ['7:105561135', '7:105561135-105563135', '1:1000000-11000500', '1:30000250-13000400', '2:1000000-10000500', '2:21000200-31000800', 'X:32000000-36000000']
 
     headers = {
         'X-TEST-MODE-KEY': os.environ['BENCHMARK_API_KEY']
@@ -165,12 +158,12 @@ if __name__ == '__main__':
     anomalies = []
 
     r0uniq = [{a[0]: a[1] for a in fset} for fset in r0uniq]
-    r0uniq_dict = {f"{a['position']}_{a['ea']}_{a['nea']}": a for a in r0uniq}
+    r0uniq_dict = {f"{a['position']}_{a['rsid']}_{a['ea']}_{a['nea']}": a for a in r0uniq}
     if len(r0uniq_dict) != len(r0uniq):
         anomalies.append(['DUPLICATE_ID', 'r0'])
 
     r1uniq = [{a[0]: a[1] for a in fset} for fset in r1uniq]
-    r1uniq_dict = {f"{a['position']}_{a['ea']}_{a['nea']}": a for a in r1uniq}
+    r1uniq_dict = {f"{a['position']}_{a['rsid']}_{a['ea']}_{a['nea']}": a for a in r1uniq}
     if len(r1uniq_dict) != len(r1uniq):
         anomalies.append(['DUPLICATE_ID', 'r1'])
 

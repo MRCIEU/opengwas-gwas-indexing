@@ -122,7 +122,7 @@ class GWASIndexing:
         with gzip.open(temp_path) as f:
             for line in f:
                 l = ['' if x == '.' else x for x in line.rstrip().decode('utf-8').split(' ')]
-                gwas[l[0].lstrip('0')][int(l[1]) // self.chunk_size][int(l[1])] = [l[2], l[3], l[4], l[5], l[6], l[7], l[8], l[9]]
+                gwas[l[0].lstrip('0')][int(l[1]) // self.chunk_size][int(l[1])].append([l[2], l[3], l[4], l[5], l[6], l[7], l[8], l[9]])
 
         for chr in gwas.keys():
             for pos_prefix in gwas[chr].keys():

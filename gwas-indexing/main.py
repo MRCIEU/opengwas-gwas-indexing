@@ -255,6 +255,8 @@ class GWASIndexing:
                     line = line.strip("\n").split()
                     if len(line) >= 3:
                         fo.write(f"{line[2]}\n")
+        else:
+            return ''
 
         logging.debug(f"Clumped tophits {gwas_id} for {suffix}")
         return clumped_rsids_path
@@ -363,10 +365,11 @@ class GWASIndexing:
             }]:
                 tophits_path = self.extract_vcf_tophits(gwas_id, vcf_path, temp_dir, params)
                 clumped_rsids_path = self.clump_tophits(gwas_id, tophits_path, params)
-                query_out_path = self.extract_vcf_by_rsids(gwas_id, vcf_path, temp_dir, clumped_rsids_path, bcftools_query_string, awk_print_string, params)
-                gwas = self.read_tophits(gwas_id, query_out_path, params)
-                self.write_tophits(gwas_id, gwas, output_dir, params)
-                self.save_tophits(gwas_id, output_dir, params)
+                if clumped_rsids_path != '':  # only proceed if there are significant clump results
+                    query_out_path = self.extract_vcf_by_rsids(gwas_id, vcf_path, temp_dir, clumped_rsids_path, bcftools_query_string, awk_print_string, params)
+                    gwas = self.read_tophits(gwas_id, query_out_path, params)
+                    self.write_tophits(gwas_id, gwas, output_dir, params)
+                    self.save_tophits(gwas_id, output_dir, params)
 
             self.cleanup(gwas_id)
         except Exception as e:
@@ -431,7 +434,7 @@ if __name__ == '__main__':
     n_proc = int(os.environ['N_PROC'])
     while True:
         gwas_ids = gi.list_pending_tasks_in_redis()
-        # gwas_ids = ['ieu-a-2']
+        gwas_ids = ['eqtl-a-ENSG00000018610']
         if len(gwas_ids) > 0:
             queue = Queue()
             for i, gwas_id in enumerate(gwas_ids):

@@ -240,7 +240,8 @@ class GWASIndexing:
         logging.debug(f"Clumping tophits {gwas_id} for {suffix}")
 
         cmd = (f"{self.plink} --bfile {self.plink_ref} --clump {tophits_path} "
-               f"--clump-kb {params['kb']} --clump-r2 {params['r2']} --clump-p1 1 --clump-p2 1 --out {tophits_path}")
+               f"--clump-kb {params['kb']} --clump-r2 {params['r2']} --clump-p1 1 --clump-p2 1 --out {tophits_path}"
+               " > /dev/null")
 
         if subprocess.call(cmd, shell=True) != 0:
             logging.error(f"FAILED clumping {gwas_id} for {suffix}")

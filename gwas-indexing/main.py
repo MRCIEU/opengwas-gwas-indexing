@@ -434,7 +434,7 @@ if __name__ == '__main__':
     n_proc = int(os.environ['N_PROC'])
     while True:
         gwas_ids = gi.list_pending_tasks_in_redis()
-        gwas_ids = ['eqtl-a-ENSG00000018610']
+        # gwas_ids = ['eqtl-a-ENSG00000018610']
         if len(gwas_ids) > 0:
             queue = Queue()
             for i, gwas_id in enumerate(gwas_ids):

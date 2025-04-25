@@ -14,6 +14,7 @@ class OCI:
         self.buckets = {
             'data': os.environ['OCI_BUCKET_DATA'],
             'data-chunks': os.environ['OCI_BUCKET_DATA_CHUNKS'],
+            'tophits': os.environ['OCI_BUCKET_TOPHITS']
         }
         config = {
             "user": os.environ['OCI_USER'],

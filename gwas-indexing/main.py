@@ -287,7 +287,7 @@ class GWASIndexing:
                 l = ['' if x == '.' else x for x in line.rstrip().decode('utf-8').split(' ')]
                 gwas.append(l[:10])
 
-        gwas = list(sorted(gwas, key=lambda x: x[9]))  # Sort by pval, asc
+        gwas = list(sorted(gwas, key=lambda x: float(x[8])))  # Sort by pval, asc
         logging.debug(f"Read bcf {gwas_id} tophits for {suffix}")
         return gwas
 

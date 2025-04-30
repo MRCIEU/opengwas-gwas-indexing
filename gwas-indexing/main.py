@@ -1,4 +1,5 @@
 import gzip
+import io
 import logging
 import math
 import multiprocessing
@@ -29,7 +30,11 @@ oci_instance = OCI()
 class GWASIndexing:
     def __init__(self):
         _env = os.environ['ENV']
-        self.redis = redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=os.environ['REDIS_DB_TASKS'])
+        self.redis = {
+            'tasks': redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=os.environ['REDIS_DB_TASKS']),
+            '5e-8_10000_0.001': redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=1),
+            '1e-5_1000_0.8': redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=2)
+        }
 
         self.input_dir_local = os.environ['INPUT_DIR_VCF_' + _env]
         self.input_dir_temp = os.environ['INPUT_DIR_TEMP']
@@ -58,8 +63,8 @@ class GWASIndexing:
         Fetch list of GWAS IDs from Redis
         :return: list of GWAS IDs
         """
-        self.redis.select(int(os.environ['REDIS_DB_TASKS']))
-        tasks = self.redis.smembers('gwas_pending')
+        self.redis['tasks'].select(int(os.environ['REDIS_DB_TASKS']))
+        tasks = self.redis['tasks'].smembers('gwas_pending')
         logging.info('Number of pending tasks: ' + str(len(tasks)))
         return [t.decode('ascii') for t in tasks]
 
@@ -213,7 +218,7 @@ class GWASIndexing:
         oci_instance.object_storage_upload('data-chunks', f"0_pos_prefix_indices_by_dataset/{gwas_id}", open(f"{self.output_path_index}/{gwas_id}", 'rb'))
 
         with gzip.open(f"{self.output_path_index}/{gwas_id}", 'rb') as f:
-            self.redis.hset('gwas_pos_prefix_indices', gwas_id, f.read())
+            self.redis['tasks'].hset('gwas_pos_prefix_indices', gwas_id, f.read())
 
         logging.debug(f"Uploaded {gwas_id}")
         return len(file_list)
@@ -304,7 +309,18 @@ class GWASIndexing:
         suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
         output_path = f"{output_dir}/tophits.{suffix}"
         logging.debug(f"Uploading {gwas_id} tophits for {suffix}")
+
         oci_instance.object_storage_upload('tophits', f"{gwas_id}/{suffix}", open(output_path, 'rb'))
+
+        with gzip.open(output_path, 'rb') as f:
+            tophits = pickle.loads(f.read())
+            members_and_scores = {}
+            for t in tophits:
+                score = float(t[8])
+                del t[8]
+                members_and_scores[':'.join(t)] = score
+            self.redis[suffix].zadd(gwas_id, members_and_scores)
+
         logging.debug(f"Uploaded {gwas_id} tophits for {suffix}")
 
     def cleanup(self, gwas_id: str) -> None:
@@ -318,6 +334,17 @@ class GWASIndexing:
         shutil.rmtree(f"{self.temp_dir}/{gwas_id}", ignore_errors=True)
         shutil.rmtree(f"{self.output_dir}/{gwas_id}", ignore_errors=True)
 
+    def read_from_os_and_write_to_redis(self, gwas_id: str, params: dict) -> None:
+        suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
+        with gzip.GzipFile(fileobj=io.BytesIO(oci_instance.object_storage_download('tophits', f"{gwas_id}/{suffix}").data.content), mode='rb') as f:
+            tophits = pickle.loads(f.read())
+            members_and_scores = {}
+            for t in tophits:
+                score = float(t[8])
+                del t[8]
+                members_and_scores[pickle.dumps(t)] = score
+            self.redis[suffix].zadd(gwas_id, members_and_scores)
+
     def report_task_status_to_redis(self, gwas_id: str, successful: bool, n_chunks: int) -> None:
         """
         Remove a task from 'gwas_pending' and add it to 'gwas_completed' or 'gwas_failed'
@@ -326,13 +353,13 @@ class GWASIndexing:
         :param n_docs: number of Elasticsearch documents
         :return: None
         """
-        self.redis.select(int(os.environ['REDIS_DB_TASKS']))
-        self.redis.srem('gwas_pending', gwas_id)
+        self.redis['tasks'].select(int(os.environ['REDIS_DB_TASKS']))
+        self.redis['tasks'].srem('gwas_pending', gwas_id)
         if successful:
-            # self.redis.zadd('gwas_completed', {gwas_id: n_chunks})
+            # self.redis['tasks'].zadd('gwas_completed', {gwas_id: n_chunks})
             logging.info('Reported {} as completed with {} docs'.format(gwas_id, n_chunks))
         else:
-            self.redis.zadd('gwas_failed', {gwas_id: int(time.time())})
+            self.redis['tasks'].zadd('gwas_failed', {gwas_id: int(time.time())})
             logging.info('Reported {} as failed'.format(gwas_id))
 
     def run_for_single_dataset(self, gwas_id) -> (bool, int):
@@ -342,9 +369,9 @@ class GWASIndexing:
         :return: task status and number of chunks
         """
         try:
-            vcf_path = self.fetch_files(gwas_id)
-            bcftools_query_string, awk_print_string = self.get_query_and_print_string(vcf_path)
-            temp_dir, output_dir = self.setup(gwas_id)
+            # vcf_path = self.fetch_files(gwas_id)
+            # bcftools_query_string, awk_print_string = self.get_query_and_print_string(vcf_path)
+            # temp_dir, output_dir = self.setup(gwas_id)
 
             # all associations
             # query_out_path = self.extract_vcf(gwas_id, vcf_path, temp_dir, bcftools_query_string, awk_print_string)
@@ -363,15 +390,16 @@ class GWASIndexing:
                 'kb': self.tophits_wide_kb,
                 'r2': self.tophits_wide_r2
             }]:
-                tophits_path = self.extract_vcf_tophits(gwas_id, vcf_path, temp_dir, params)
-                clumped_rsids_path = self.clump_tophits(gwas_id, tophits_path, params)
-                if clumped_rsids_path != '':  # only proceed if there are significant clump results
-                    query_out_path = self.extract_vcf_by_rsids(gwas_id, vcf_path, temp_dir, clumped_rsids_path, bcftools_query_string, awk_print_string, params)
-                    gwas = self.read_tophits(gwas_id, query_out_path, params)
-                    self.write_tophits(gwas_id, gwas, output_dir, params)
-                    self.save_tophits(gwas_id, output_dir, params)
+                # tophits_path = self.extract_vcf_tophits(gwas_id, vcf_path, temp_dir, params)
+                # clumped_rsids_path = self.clump_tophits(gwas_id, tophits_path, params)
+                # if clumped_rsids_path != '':  # only proceed if there are significant clump results
+                #     query_out_path = self.extract_vcf_by_rsids(gwas_id, vcf_path, temp_dir, clumped_rsids_path, bcftools_query_string, awk_print_string, params)
+                #     gwas = self.read_tophits(gwas_id, query_out_path, params)
+                #     self.write_tophits(gwas_id, gwas, output_dir, params)
+                #     self.save_tophits(gwas_id, output_dir, params)
+                self.read_from_os_and_write_to_redis(gwas_id, params)
 
-            self.cleanup(gwas_id)
+            # self.cleanup(gwas_id)
         except Exception as e:
             logging.error(e)
             return False, 0
@@ -434,7 +462,7 @@ if __name__ == '__main__':
     n_proc = int(os.environ['N_PROC'])
     while True:
         gwas_ids = gi.list_pending_tasks_in_redis()
-        # gwas_ids = ['eqtl-a-ENSG00000018610']
+        # gwas_ids = ['bbj-a-1', 'ieu-a-1', 'ieu-b-1']
         if len(gwas_ids) > 0:
             queue = Queue()
             for i, gwas_id in enumerate(gwas_ids):

@@ -527,7 +527,7 @@ if __name__ == '__main__':
         gwas_ids = gi.list_pending_tasks_in_redis()
         # gwas_ids = ['bbj-a-1', 'ieu-a-1', 'ieu-b-1']
         if len(gwas_ids) > 0:
-            queue = Queue()
+            queue = multiprocessing.Queue()
             for i, gwas_id in enumerate(gwas_ids):
                 queue.put((i, gwas_id))
             for _ in range(n_proc):

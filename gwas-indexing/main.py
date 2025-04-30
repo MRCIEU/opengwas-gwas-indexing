@@ -342,7 +342,7 @@ class GWASIndexing:
             for t in tophits:
                 score = float(t[8])
                 del t[8]
-                members_and_scores[pickle.dumps(t)] = score
+                members_and_scores[':'.join(t)] = score
             self.redis[suffix].zadd(gwas_id, members_and_scores)
 
     def report_task_status_to_redis(self, gwas_id: str, successful: bool, n_chunks: int) -> None:

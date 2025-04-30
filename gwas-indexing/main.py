@@ -1,10 +1,13 @@
 import gzip
-import io
+# import io
 import logging
 import math
 import multiprocessing
 import os
 import pickle
+import queue
+import threading
+
 import redis
 import shutil
 import subprocess
@@ -12,9 +15,9 @@ import time
 
 from collections import defaultdict
 from dotenv import load_dotenv
-from multiprocessing import Process, Queue
 from pysam import VariantFile
 from retry import retry
+from threading import Thread
 
 from _oci import OCI
 
@@ -61,7 +64,7 @@ class GWASIndexing:
     def list_pending_tasks_in_redis(self) -> list:
         """
         Fetch list of GWAS IDs from Redis
-        :return: list of GWAS IDs
+        :return: List of GWAS IDs
         """
         self.redis['tasks'].select(int(os.environ['REDIS_DB_TASKS']))
         tasks = self.redis['tasks'].smembers('gwas_pending')
@@ -69,6 +72,11 @@ class GWASIndexing:
         return [t.decode('ascii') for t in tasks]
 
     def setup(self, gwas_id: str) -> (str, str):
+        """
+        Create temporary directories for this dataset
+        :param gwas_id: GWAS ID
+        :return: Temp directory and output directory
+        """
         temp_dir = f"{self.temp_dir}/{gwas_id}"
         shutil.rmtree(temp_dir, ignore_errors=True)
         os.makedirs(temp_dir)
@@ -107,26 +115,30 @@ class GWASIndexing:
         :param vcf_path: Full path to the .vcf.gz file
         :return: bcftools_query_string, awk_print_string
         """
-        ss = '.'
-
         vcf = VariantFile(vcf_path)
         available_columns = next(vcf.fetch()).format.keys()
 
         if 'SS' in available_columns:
-            ss = '$10'
+            awk_print_string = f'{{print $1, $2, $3, $4, $5, $6, $7, $8, 10^-$9, $10}}'
         else:
             vcf.seek(0)
             global_fields = [x for x in vcf.header.records if x.key == "SAMPLE"][0]
             if 'TotalControls' in global_fields.keys():
                 ss = str(int(float(global_fields['TotalControls'])) + int(float(global_fields.get('TotalCases', 0))))
+            else:
+                ss = '.'
+            awk_print_string = f'{{print $1, $2, $3, $4, $5, $6, $7, $8, 10^-$9, \"{ss}\"}}'
 
-        return '%CHROM %POS %ID %ALT %REF[ %AF %ES %SE %LP %SS]\n', f'{{print $1, $2, $3, $4, $5, $6, $7, $8, 10^-$9, \"{ss}\"}}'
+        return '%CHROM %POS %ID %ALT %REF[ %AF %ES %SE %LP %SS]\n', awk_print_string
 
     def extract_vcf(self, gwas_id: str, vcf_path: str, temp_dir: str, bcftools_query_string: str, awk_print_string: str) -> str:
         """
         Query VCF using bcftools and gzip the output to a temporary file
         :param gwas_id: GWAS ID
         :param vcf_path: Full path to the .vcf.gz file
+        :param temp_dir: Temporary directory for this dataset
+        :param bcftools_query_string: bcftools query string
+        :param awk_print_string: awk print string
         :return: Full path to temporary file produced by bcftools
         """
         query_out_path = f"{temp_dir}/{gwas_id}"
@@ -146,7 +158,8 @@ class GWASIndexing:
     def read_gwas(self, gwas_id: str, query_out_path: str) -> dict:
         """
         Read the temporary file and store the data in chunks
-        :param temp_path: Full path to temporary file produced by bcftools
+        :param gwas_id: GWAS ID
+        :param query_out_path: Full path to temporary file produced by bcftools
         :return: Dictionary of GWAS data, by chromosome and then position prefix
         """
         gwas = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
@@ -169,6 +182,7 @@ class GWASIndexing:
         Write the GWAS chunks to files and produce the index file
         :param gwas_id: GWAS ID
         :param gwas: Dictionary of GWAS data
+        :param output_dir: Output directory for this dataset
         :return: None
         """
         output_path = output_dir
@@ -201,19 +215,19 @@ class GWASIndexing:
 
         n_workers = int(os.environ['N_PROC']) * 2
 
-        queue = Queue()
+        queue_queue = queue.Queue()
         for i, filename in enumerate(file_list):
-            queue.put((i, filename))
+            queue_queue.put((i, filename))
         for _ in range(n_workers):
-            queue.put(None)
+            queue_queue.put(None)
 
-        processes = []
-        for proc_id in range(n_workers):
-            proc = Process(target=file_upload_worker, args=(gwas_id, proc_id, queue))
-            proc.start()
-            processes.append(proc)
-        for proc in processes:
-            proc.join()
+        threads = []
+        for thread_id in range(n_workers):
+            thread = threading.Thread(target=file_upload_worker, args=(gwas_id, thread_id, queue_queue))
+            thread.start()
+            threads.append(thread)
+        for thread in threads:
+            thread.join()
 
         oci_instance.object_storage_upload('data-chunks', f"0_pos_prefix_indices_by_dataset/{gwas_id}", open(f"{self.output_path_index}/{gwas_id}", 'rb'))
 
@@ -224,6 +238,14 @@ class GWASIndexing:
         return len(file_list)
 
     def extract_vcf_tophits(self, gwas_id: str, vcf_path: str, temp_dir: str, params: dict) -> str:
+        """
+        Extract tophits from the VCF file using bcftools
+        :param gwas_id: GWAS ID
+        :param vcf_path: Full path to the .vcf.gz file
+        :param temp_dir: Temporary directory for this dataset
+        :param params: Parameters used for extracting and clumping tophits
+        :return: Full path to temporary (tophits) file produced by bcftools
+        """
         tophits_path = f"{temp_dir}/{gwas_id}.tophits"
         logging.debug(f"Extracting tophits {gwas_id}")
 
@@ -241,6 +263,13 @@ class GWASIndexing:
         return tophits_path
 
     def clump_tophits(self, gwas_id: str, tophits_path: str, params: dict) -> str:
+        """
+        Clump the tophits using plink
+        :param gwas_id: GWAS ID
+        :param tophits_path: Full path to temporary (tophits) file produced by bcftools
+        :param params: Parameters used for extracting and clumping tophits
+        :return: Full path to clumped tophits
+        """
         suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
         logging.debug(f"Clumping tophits {gwas_id} for {suffix}")
 
@@ -267,6 +296,17 @@ class GWASIndexing:
         return clumped_rsids_path
 
     def extract_vcf_by_rsids(self, gwas_id: str, vcf_path: str, temp_dir: str, rsids_path: str, bcftools_query_string: str, awk_print_string: str, params: dict) -> str:
+        """
+        Extract tophits from the VCF file using bcftools and rsids
+        :param gwas_id: GWAS ID
+        :param vcf_path: Full path to the .vcf.gz file
+        :param temp_dir: Temporary directory for this dataset
+        :param rsids_path: Full path to the file that contains the list of rsids
+        :param bcftools_query_string: bcftools query string
+        :param awk_print_string: awk print string
+        :param params: Parameters used for extracting and clumping tophits
+        :return: Full path to temporary (tophits) file produced by bcftools
+        """
         suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
         query_out_path = f"{temp_dir}/{gwas_id}"
         logging.debug(f"Extracting {gwas_id} using rsids for {suffix}")
@@ -283,7 +323,14 @@ class GWASIndexing:
         logging.debug(f"Extracted {gwas_id} using rsids for {suffix}")
         return query_out_path
 
-    def read_tophits(self, gwas_id: str, query_out_path: str, params: dict):
+    def read_tophits(self, gwas_id: str, query_out_path: str, params: dict) -> list:
+        """
+        Read tophits from bcftools query result
+        :param gwas_id: GWAS ID
+        :param query_out_path: Full path to temporary (tophits) file produced by bcftools
+        :param params: Parameters used for extracting and clumping tophits
+        :return: List of tophits
+        """
         suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
         gwas = []
         logging.debug(f"Reading bcf {gwas_id} tophits for {suffix}")
@@ -292,11 +339,19 @@ class GWASIndexing:
                 l = ['' if x == '.' else x for x in line.rstrip().decode('utf-8').split(' ')]
                 gwas.append(l[:10])
 
-        gwas = list(sorted(gwas, key=lambda x: float(x[8])))  # Sort by pval, asc
+        gwas = list(sorted(gwas, key=lambda x: float(x[8])))  # Sort by pval, ascending
         logging.debug(f"Read bcf {gwas_id} tophits for {suffix}")
         return gwas
 
-    def write_tophits(self, gwas_id: str, gwas: list, output_dir: str, params: dict):
+    def write_tophits(self, gwas_id: str, gwas: list, output_dir: str, params: dict) -> None:
+        """
+        Write the tophits to a temporary file
+        :param gwas_id: GWAS ID
+        :param gwas: List of tophits
+        :param output_dir: Output directory for the tophits file
+        :param params: Parameters used for extracting and clumping tophits
+        :return:
+        """
         suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
         output_path = f"{output_dir}/tophits.{suffix}"
         logging.debug(f"Writing {gwas_id} tophits {suffix}")
@@ -305,12 +360,20 @@ class GWASIndexing:
             pickle.dump(gwas, f)
         logging.debug(f"Written {gwas_id} tophits {suffix}")
 
-    def save_tophits(self, gwas_id: str, output_dir: str, params: dict):
+    def save_tophits(self, gwas_id: str, output_dir: str, params: dict) -> None:
+        """
+        Upload the tophits to OCI and Redis
+        :param gwas_id: GWAS ID
+        :param output_dir: Full path to the tophits file
+        :param params: Parameters used for extracting and clumping tophits
+        :return:
+        """
         suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
         output_path = f"{output_dir}/tophits.{suffix}"
         logging.debug(f"Uploading {gwas_id} tophits for {suffix}")
 
-        oci_instance.object_storage_upload('tophits', f"{gwas_id}/{suffix}", open(output_path, 'rb'))
+        with open(output_path, 'rb') as f:
+            oci_instance.object_storage_upload('tophits', f"{gwas_id}/{suffix}", f)
 
         with gzip.open(output_path, 'rb') as f:
             tophits = pickle.loads(f.read())
@@ -334,16 +397,16 @@ class GWASIndexing:
         shutil.rmtree(f"{self.temp_dir}/{gwas_id}", ignore_errors=True)
         shutil.rmtree(f"{self.output_dir}/{gwas_id}", ignore_errors=True)
 
-    def read_from_os_and_write_to_redis(self, gwas_id: str, params: dict) -> None:
-        suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
-        with gzip.GzipFile(fileobj=io.BytesIO(oci_instance.object_storage_download('tophits', f"{gwas_id}/{suffix}").data.content), mode='rb') as f:
-            tophits = pickle.loads(f.read())
-            members_and_scores = {}
-            for t in tophits:
-                score = float(t[8])
-                del t[8]
-                members_and_scores[':'.join(t)] = score
-            self.redis[suffix].zadd(gwas_id, members_and_scores)
+    # def read_from_os_and_write_to_redis(self, gwas_id: str, params: dict) -> None:
+    #     suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
+    #     with gzip.GzipFile(fileobj=io.BytesIO(oci_instance.object_storage_download('tophits', f"{gwas_id}/{suffix}").data.content), mode='rb') as f:
+    #         tophits = pickle.loads(f.read())
+    #         members_and_scores = {}
+    #         for t in tophits:
+    #             score = float(t[8])
+    #             del t[8]
+    #             members_and_scores[':'.join(t)] = score
+    #         self.redis[suffix].zadd(gwas_id, members_and_scores)
 
     def report_task_status_to_redis(self, gwas_id: str, successful: bool, n_chunks: int) -> None:
         """
@@ -369,9 +432,9 @@ class GWASIndexing:
         :return: task status and number of chunks
         """
         try:
-            # vcf_path = self.fetch_files(gwas_id)
-            # bcftools_query_string, awk_print_string = self.get_query_and_print_string(vcf_path)
-            # temp_dir, output_dir = self.setup(gwas_id)
+            vcf_path = self.fetch_files(gwas_id)
+            bcftools_query_string, awk_print_string = self.get_query_and_print_string(vcf_path)
+            temp_dir, output_dir = self.setup(gwas_id)
 
             # all associations
             # query_out_path = self.extract_vcf(gwas_id, vcf_path, temp_dir, bcftools_query_string, awk_print_string)
@@ -390,16 +453,15 @@ class GWASIndexing:
                 'kb': self.tophits_wide_kb,
                 'r2': self.tophits_wide_r2
             }]:
-                # tophits_path = self.extract_vcf_tophits(gwas_id, vcf_path, temp_dir, params)
-                # clumped_rsids_path = self.clump_tophits(gwas_id, tophits_path, params)
-                # if clumped_rsids_path != '':  # only proceed if there are significant clump results
-                #     query_out_path = self.extract_vcf_by_rsids(gwas_id, vcf_path, temp_dir, clumped_rsids_path, bcftools_query_string, awk_print_string, params)
-                #     gwas = self.read_tophits(gwas_id, query_out_path, params)
-                #     self.write_tophits(gwas_id, gwas, output_dir, params)
-                #     self.save_tophits(gwas_id, output_dir, params)
-                self.read_from_os_and_write_to_redis(gwas_id, params)
+                tophits_path = self.extract_vcf_tophits(gwas_id, vcf_path, temp_dir, params)
+                clumped_rsids_path = self.clump_tophits(gwas_id, tophits_path, params)
+                if clumped_rsids_path != '':  # only proceed if there are significant clump results
+                    query_out_path = self.extract_vcf_by_rsids(gwas_id, vcf_path, temp_dir, clumped_rsids_path, bcftools_query_string, awk_print_string, params)
+                    gwas = self.read_tophits(gwas_id, query_out_path, params)
+                    self.write_tophits(gwas_id, gwas, output_dir, params)
+                    self.save_tophits(gwas_id, output_dir, params)
 
-            # self.cleanup(gwas_id)
+            self.cleanup(gwas_id)
         except Exception as e:
             logging.error(e)
             return False, 0
@@ -409,7 +471,7 @@ class GWASIndexing:
 def gwas_indexing_worker(proc_id: int, queue: multiprocessing.Queue) -> None:
     """
     The worker function for GWAS indexing
-    :param proc_id: process ID
+    :param proc_id: Process ID
     :param queue: multiprocessing.Queue containing gwas_id strings
     :return:
     """
@@ -432,11 +494,11 @@ def gwas_indexing_worker(proc_id: int, queue: multiprocessing.Queue) -> None:
         _run(gwas_id)
 
 
-def file_upload_worker(gwas_id: str, proc_id: int, queue: multiprocessing.Queue) -> None:
+def file_upload_worker(gwas_id: str, thread_id: int, queue: queue.Queue) -> None:
     """
     The worker function for uploading chunk files of a single dataset
-    :param proc_id: process ID
-    :param queue: multiprocessing.Queue containing gwas_id strings
+    :param thread_id: Thread ID
+    :param queue: queue.Queue containing gwas_id strings
     :param gwas_id: the current GWAS ID
     :return:
     """
@@ -444,13 +506,14 @@ def file_upload_worker(gwas_id: str, proc_id: int, queue: multiprocessing.Queue)
 
     @retry(tries=-1, delay=3)
     def _upload(gwas_id, i, filename):
-        oci_instance.object_storage_upload('data-chunks', f"{gwas_id}/{filename}", open(f"{output_dir}/{gwas_id}/{filename}", 'rb'))
+        with open(f"{output_dir}/{gwas_id}/{filename}", 'rb') as f:
+            oci_instance.object_storage_upload('data-chunks', f"{gwas_id}/{filename}", f)
         logging.debug(f"Uploading {gwas_id}, chunk {i}")
 
     while True:
         task = queue.get()
         if not task:
-            logging.debug(f"Terminating file upload worker {gwas_id}, {proc_id}")
+            logging.debug(f"Terminating file upload worker {gwas_id}, {thread_id}")
             break
         i, filename = task
         _upload(gwas_id, i, filename)
@@ -472,7 +535,7 @@ if __name__ == '__main__':
 
             processes = []
             for proc_id in range(n_proc):
-                proc = Process(target=gwas_indexing_worker, args=(proc_id, queue))
+                proc = multiprocessing.Process(target=gwas_indexing_worker, args=(proc_id, queue))
                 proc.start()
                 processes.append(proc)
             for proc in processes:

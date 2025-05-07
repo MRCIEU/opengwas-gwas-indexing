@@ -7,6 +7,7 @@ import os
 import pickle
 import queue
 import threading
+import traceback
 
 import redis
 import shutil
@@ -451,6 +452,7 @@ class GWASIndexing:
             self.cleanup(gwas_id)
         except Exception as e:
             logging.error(e)
+            logging.error(traceback.format_exc())
             return False, 0
         return True, n_chunks
 
@@ -512,7 +514,7 @@ if __name__ == '__main__':
     n_proc = int(os.environ['N_PROC'])
     while True:
         gwas_ids = gi.list_pending_tasks_in_redis()
-        # gwas_ids = ['bbj-a-1', 'ieu-a-1', 'ieu-b-1']
+        gwas_ids = ['ieu-a-2']
         if len(gwas_ids) > 0:
             queue = multiprocessing.Queue()
             for i, gwas_id in enumerate(gwas_ids):

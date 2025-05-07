@@ -215,15 +215,15 @@ class GWASIndexing:
 
         n_workers = int(os.environ['N_PROC']) * 2
 
-        queue_queue = queue.Queue()
+        qqueue = queue.Queue()
         for i, filename in enumerate(file_list):
-            queue_queue.put((i, filename))
+            qqueue.put((i, filename))
         for _ in range(n_workers):
-            queue_queue.put(None)
+            qqueue.put(None)
 
         threads = []
         for thread_id in range(n_workers):
-            thread = threading.Thread(target=file_upload_worker, args=(gwas_id, thread_id, queue_queue))
+            thread = threading.Thread(target=file_upload_worker, args=(gwas_id, thread_id, qqueue))
             thread.start()
             threads.append(thread)
         for thread in threads:
@@ -451,7 +451,6 @@ class GWASIndexing:
 
             self.cleanup(gwas_id)
         except Exception as e:
-            logging.error(e)
             logging.error(traceback.format_exc())
             return False, 0
         return True, n_chunks
@@ -516,15 +515,15 @@ if __name__ == '__main__':
         gwas_ids = gi.list_pending_tasks_in_redis()
         gwas_ids = ['ieu-a-2']
         if len(gwas_ids) > 0:
-            queue = multiprocessing.Queue()
+            mqueue = multiprocessing.Queue()
             for i, gwas_id in enumerate(gwas_ids):
-                queue.put((i, gwas_id))
+                mqueue.put((i, gwas_id))
             for _ in range(n_proc):
-                queue.put(None)
+                mqueue.put(None)
 
             processes = []
             for proc_id in range(n_proc):
-                proc = multiprocessing.Process(target=gwas_indexing_worker, args=(proc_id, queue))
+                proc = multiprocessing.Process(target=gwas_indexing_worker, args=(proc_id, mqueue))
                 proc.start()
                 processes.append(proc)
             for proc in processes:

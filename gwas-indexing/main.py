@@ -17,7 +17,6 @@ from collections import defaultdict
 from dotenv import load_dotenv
 from pysam import VariantFile
 from retry import retry
-from threading import Thread
 
 from _oci import OCI
 
@@ -397,17 +396,6 @@ class GWASIndexing:
         shutil.rmtree(f"{self.temp_dir}/{gwas_id}", ignore_errors=True)
         shutil.rmtree(f"{self.output_dir}/{gwas_id}", ignore_errors=True)
 
-    # def read_from_os_and_write_to_redis(self, gwas_id: str, params: dict) -> None:
-    #     suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
-    #     with gzip.GzipFile(fileobj=io.BytesIO(oci_instance.object_storage_download('tophits', f"{gwas_id}/{suffix}").data.content), mode='rb') as f:
-    #         tophits = pickle.loads(f.read())
-    #         members_and_scores = {}
-    #         for t in tophits:
-    #             score = float(t[8])
-    #             del t[8]
-    #             members_and_scores[':'.join(t)] = score
-    #         self.redis[suffix].zadd(gwas_id, members_and_scores)
-
     def report_task_status_to_redis(self, gwas_id: str, successful: bool, n_chunks: int) -> None:
         """
         Remove a task from 'gwas_pending' and add it to 'gwas_completed' or 'gwas_failed'
@@ -437,13 +425,12 @@ class GWASIndexing:
             temp_dir, output_dir = self.setup(gwas_id)
 
             # all associations
-            # query_out_path = self.extract_vcf(gwas_id, vcf_path, temp_dir, bcftools_query_string, awk_print_string)
-            # gwas = self.read_gwas(gwas_id, query_out_path)
-            # self.write_gwas(gwas_id, gwas, output_dir)
-            # n_chunks = self.save_chunks_and_index(gwas_id)
+            query_out_path = self.extract_vcf(gwas_id, vcf_path, temp_dir, bcftools_query_string, awk_print_string)
+            gwas = self.read_gwas(gwas_id, query_out_path)
+            self.write_gwas(gwas_id, gwas, output_dir)
+            n_chunks = self.save_chunks_and_index(gwas_id)
 
             # tophits
-            n_chunks = -1
             for params in [{
                 'pval': self.tophits_pval,
                 'kb': self.tophits_kb,

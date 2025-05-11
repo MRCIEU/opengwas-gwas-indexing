@@ -170,17 +170,17 @@ class GWASIndexing:
         with gzip.open(query_out_path) as f:
             for line in f:
                 l = ['' if x == '.' else x for x in line.rstrip().decode('utf-8').split(' ')]
-                gwas[l[0].lstrip('0')][int(l[1]) // self.chunk_size][int(l[1])].append(
-                    [l[2], l[3], l[4], l[5], l[6], l[7], l[8], l[9]]
-                    # rsid, ea,  nea,  af,   beta, se,   pval, ss
-                )
+                # gwas[l[0].lstrip('0')][int(l[1]) // self.chunk_size][int(l[1])].append(
+                #     [l[2], l[3], l[4], l[5], l[6], l[7], l[8], l[9]]
+                #     # rsid, ea,  nea,  af,   beta, se,   pval, ss
+                # )
                 if float(l[8]) < self.phewas_pval:
                     phewas[f"{l[0].lstrip('0')}:{l[1]}:{l[3]}:{l[4]}"] = float(l[8])
 
-        for chr in gwas.keys():
-            for pos_prefix in gwas[chr].keys():
-                gwas[chr][pos_prefix] = dict(sorted(gwas[chr][pos_prefix].items()))
-            gwas[chr] = dict(sorted(gwas[chr].items()))
+        # for chr in gwas.keys():
+        #     for pos_prefix in gwas[chr].keys():
+        #         gwas[chr][pos_prefix] = dict(sorted(gwas[chr][pos_prefix].items()))
+        #     gwas[chr] = dict(sorted(gwas[chr].items()))
 
         logging.debug(f"Read bcf {gwas_id}")
         return dict(sorted(gwas.items())), phewas

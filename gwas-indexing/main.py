@@ -35,8 +35,9 @@ class GWASIndexing:
         self.redis = {
             'tasks': redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=0),
             '5e-8_10000_0.001': redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=1),
-            '1e-5_1000_0.8': redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=2)
             '1e-5_1000_0.8': redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=2),
+            'phewas_chr_posalleles': redis.Redis(host=os.environ['REDIS_2_HOST_' + _env], port=os.environ['REDIS_2_PORT_' + _env], password=os.environ['REDIS_2_PASS_' + _env], db=3),
+            'phewas_cpallales_gwasid': redis.Redis(host=os.environ['REDIS_2_HOST_' + _env], port=os.environ['REDIS_2_PORT_' + _env], password=os.environ['REDIS_2_PASS_' + _env], db=4)
         }
 
         self.input_dir_local = os.environ['INPUT_DIR_VCF_' + _env]
@@ -52,6 +53,7 @@ class GWASIndexing:
         self.plink_ref = os.environ['PLINK_REF_' + _env]
 
         self.chunk_size = 10_000_000
+        self.phewas_pval = 0.01
 
         self.tophits_pval = '5e-8'
         self.tophits_kb = '10000'
@@ -154,19 +156,26 @@ class GWASIndexing:
         logging.debug(f"Extracted {gwas_id}")
         return query_out_path
 
-    def read_gwas(self, gwas_id: str, query_out_path: str) -> dict:
+    def read_gwas(self, gwas_id: str, query_out_path: str) -> (dict, dict):
         """
-        Read the temporary file and store the data in chunks
+        Read the temporary file, store the data in chunks and filter out records that will be used in PheWAS
         :param gwas_id: GWAS ID
         :param query_out_path: Full path to temporary file produced by bcftools
-        :return: Dictionary of GWAS data, by chromosome and then position prefix
+        :return: Dictionary of GWAS data (by chromosome and then position prefix)
+            and dictonary of PheWAS data (by chr:pos:ea:nea)
         """
         gwas = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        phewas = {}
         logging.debug(f"Reading bcf {gwas_id}")
         with gzip.open(query_out_path) as f:
             for line in f:
                 l = ['' if x == '.' else x for x in line.rstrip().decode('utf-8').split(' ')]
-                gwas[l[0].lstrip('0')][int(l[1]) // self.chunk_size][int(l[1])].append([l[2], l[3], l[4], l[5], l[6], l[7], l[8], l[9]])
+                gwas[l[0].lstrip('0')][int(l[1]) // self.chunk_size][int(l[1])].append(
+                    [l[2], l[3], l[4], l[5], l[6], l[7], l[8], l[9]]
+                    # rsid, ea,  nea,  af,   beta, se,   pval, ss
+                )
+                if float(l[8]) < self.phewas_pval:
+                    phewas[f"{l[0].lstrip('0')}:{l[1]}:{l[3]}:{l[4]}"] = float(l[8])
 
         for chr in gwas.keys():
             for pos_prefix in gwas[chr].keys():
@@ -174,7 +183,7 @@ class GWASIndexing:
             gwas[chr] = dict(sorted(gwas[chr].items()))
 
         logging.debug(f"Read bcf {gwas_id}")
-        return dict(sorted(gwas.items()))
+        return dict(sorted(gwas.items())), phewas
 
     def write_gwas(self, gwas_id: str, gwas: dict, output_dir: str) -> None:
         """
@@ -235,6 +244,37 @@ class GWASIndexing:
 
         logging.debug(f"Uploaded {gwas_id}")
         return len(file_list)
+
+    def save_phewas(self, gwas_id: str, id_n: str, phewas: dict) -> None:
+        """
+        Save the PheWAS data to Redis
+        :param gwas_id: GWAS ID
+        :param id_n: id(n) of the GwasInfo node
+        :param phewas: Dictionary of PheWAS data (by chr:pos:ea:nea)
+        :return:
+        """
+        chr_posalleles = defaultdict(list)
+        posalleles_pval = {}
+        for chr_pos_ea_oa, pval in phewas.items():
+            chr, pos, ea, oa = chr_pos_ea_oa.split(':')
+            chr_posalleles[chr].append((pos, ea, oa))
+            posalleles_pval[chr_pos_ea_oa] = pval
+        t = time.time()
+
+        pipe = self.redis['phewas_chr_posalleles'].pipeline()
+        for chr, pos_ea_oa_tuples in chr_posalleles.items():
+            pipe.zadd(chr, {'{}:{}:{}'.format(peo[0], peo[1], peo[2]): peo[0] for peo in pos_ea_oa_tuples})
+        r1 = pipe.execute()
+        success_chr_posalleles = sum(1 for r in r1 if r > 0)
+        t2 = time.time()
+
+        pipe = self.redis['phewas_cpallales_gwasid'].pipeline()
+        for chr_pos_ea_oa, pval in posalleles_pval.items():
+            pipe.zadd(chr_pos_ea_oa, {id_n: pval})
+        r2 = pipe.execute()
+        success_cpallales_gwasid = sum(1 for r in r2 if r > 0)
+
+        logging.debug(f"Saved PheWAS of {gwas_id}: {success_chr_posalleles} ({round(t2 - t, 3)} s), {success_cpallales_gwasid} ({round(time.time() - t2, 3)} s)")
 
     def extract_vcf_tophits(self, gwas_id: str, vcf_path: str, temp_dir: str, params: dict) -> str:
         """
@@ -427,9 +467,9 @@ class GWASIndexing:
 
             # all associations
             query_out_path = self.extract_vcf(gwas_id, vcf_path, temp_dir, bcftools_query_string, awk_print_string)
-            gwas = self.read_gwas(gwas_id, query_out_path)
             self.write_gwas(gwas_id, gwas, output_dir)
             n_chunks = self.save_chunks_and_index(gwas_id)
+            gwas, phewas = self.read_gwas(gwas_id, query_out_path)
 
             # tophits
             for params in [{
@@ -512,9 +552,9 @@ if __name__ == '__main__':
 
     n_proc = int(os.environ['N_PROC'])
     while True:
-        gwas_ids = gi.list_pending_tasks_in_redis()
-        # gwas_ids = ['ieu-a-2']
-        if len(gwas_ids) > 0:
+        tasks = gi.list_pending_tasks_in_redis()
+        tasks = ['315919:ieu-a-2']
+        if len(tasks) > 0:
             mqueue = multiprocessing.Queue()
             for i, id_n_and_gwas_id in enumerate(tasks):
                 mqueue.put((i, id_n_and_gwas_id))

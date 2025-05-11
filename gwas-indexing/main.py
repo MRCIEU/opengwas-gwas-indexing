@@ -1,5 +1,4 @@
 import gzip
-# import io
 import logging
 import math
 import multiprocessing
@@ -34,9 +33,10 @@ class GWASIndexing:
     def __init__(self):
         _env = os.environ['ENV']
         self.redis = {
-            'tasks': redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=os.environ['REDIS_DB_TASKS']),
+            'tasks': redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=0),
             '5e-8_10000_0.001': redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=1),
             '1e-5_1000_0.8': redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=2)
+            '1e-5_1000_0.8': redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=2),
         }
 
         self.input_dir_local = os.environ['INPUT_DIR_VCF_' + _env]
@@ -66,8 +66,7 @@ class GWASIndexing:
         Fetch list of GWAS IDs from Redis
         :return: List of GWAS IDs
         """
-        self.redis['tasks'].select(int(os.environ['REDIS_DB_TASKS']))
-        tasks = self.redis['tasks'].smembers('gwas_pending')
+        tasks = self.redis['tasks'].smembers('tasks_pending')
         logging.info('Number of pending tasks: ' + str(len(tasks)))
         return [t.decode('ascii') for t in tasks]
 
@@ -399,19 +398,18 @@ class GWASIndexing:
 
     def report_task_status_to_redis(self, gwas_id: str, successful: bool, n_chunks: int) -> None:
         """
-        Remove a task from 'gwas_pending' and add it to 'gwas_completed' or 'gwas_failed'
+        Remove a task from 'tasks_pending' and add it to 'tasks_completed' or 'tasks_failed'
         :param gwas_id: the full GWAS ID
         :param successful: whether the task is successful or not
         :param n_docs: number of Elasticsearch documents
         :return: None
         """
-        self.redis['tasks'].select(int(os.environ['REDIS_DB_TASKS']))
-        self.redis['tasks'].srem('gwas_pending', gwas_id)
+        self.redis['tasks'].srem('tasks_pending', gwas_id)
         if successful:
-            # self.redis['tasks'].zadd('gwas_completed', {gwas_id: n_chunks})
+            self.redis['tasks'].zadd('tasks_completed', {gwas_id: n_chunks})
             logging.info('Reported {} as completed with {} docs'.format(gwas_id, n_chunks))
         else:
-            self.redis['tasks'].zadd('gwas_failed', {gwas_id: int(time.time())})
+            self.redis['tasks'].zadd('tasks_failed', {gwas_id: int(time.time())})
             logging.info('Reported {} as failed'.format(gwas_id))
 
     def run_for_single_dataset(self, gwas_id) -> (bool, int):

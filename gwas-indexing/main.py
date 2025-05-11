@@ -412,13 +412,15 @@ class GWASIndexing:
             self.redis['tasks'].zadd('tasks_failed', {gwas_id: int(time.time())})
             logging.info('Reported {} as failed'.format(gwas_id))
 
-    def run_for_single_dataset(self, gwas_id) -> (bool, int):
+    def run_for_single_dataset(self, id_n_and_gwas_id: str) -> (bool, int):
         """
         For a single GWAS dataset, fetch files, extract VCF, generate chunk and index files, upload to OCI and cleanup
-        :param gwas_id: GWAS ID
+        :param id_n_and_gwas_id: id(n) and GWAS ID e.g. 315919:ieu-a-2
         :return: task status and number of chunks
         """
         try:
+            id_n, gwas_id = id_n_and_gwas_id.split(':', 1)
+
             vcf_path = self.fetch_files(gwas_id)
             bcftools_query_string, awk_print_string = self.get_query_and_print_string(vcf_path)
             temp_dir, output_dir = self.setup(gwas_id)
@@ -458,26 +460,26 @@ def gwas_indexing_worker(proc_id: int, queue: multiprocessing.Queue) -> None:
     """
     The worker function for GWAS indexing
     :param proc_id: Process ID
-    :param queue: multiprocessing.Queue containing gwas_id strings
+    :param queue: multiprocessing.Queue containing id_n_and_gwas_id (e.g. 315919:ieu-a-2) strings
     :return:
     """
     logging.info(f"Process {proc_id} started")
     gi = GWASIndexing()
     tp = time.time()
 
-    def _run(gwas_id):
+    def _run(id_n_and_gwas_id):
         t0 = time.time()
-        successful, n_chunks = gi.run_for_single_dataset(gwas_id)
-        gi.report_task_status_to_redis(gwas_id, successful, n_chunks)
-        logging.info('Task {} completed in {} s'.format(gwas_id, str(round(time.time() - t0, 3))))
+        successful, n_chunks = gi.run_for_single_dataset(id_n_and_gwas_id)
+        gi.report_task_status_to_redis(id_n_and_gwas_id, successful, n_chunks)
+        logging.info('Task {} completed in {} s'.format(id_n_and_gwas_id, str(round(time.time() - t0, 3))))
 
     while True:
         task = queue.get()
         if not task:
             logging.info('Process {} ended in {} s'.format(proc_id, str(round(time.time() - tp, 3))))
             break
-        i, gwas_id = task
-        _run(gwas_id)
+        i, id_n_and_gwas_id = task
+        _run(id_n_and_gwas_id)
 
 
 def file_upload_worker(gwas_id: str, thread_id: int, queue: queue.Queue) -> None:
@@ -514,8 +516,8 @@ if __name__ == '__main__':
         # gwas_ids = ['ieu-a-2']
         if len(gwas_ids) > 0:
             mqueue = multiprocessing.Queue()
-            for i, gwas_id in enumerate(gwas_ids):
-                mqueue.put((i, gwas_id))
+            for i, id_n_and_gwas_id in enumerate(tasks):
+                mqueue.put((i, id_n_and_gwas_id))
             for _ in range(n_proc):
                 mqueue.put(None)
 

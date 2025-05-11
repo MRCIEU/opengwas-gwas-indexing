@@ -467,27 +467,31 @@ class GWASIndexing:
 
             # all associations
             query_out_path = self.extract_vcf(gwas_id, vcf_path, temp_dir, bcftools_query_string, awk_print_string)
-            self.write_gwas(gwas_id, gwas, output_dir)
-            n_chunks = self.save_chunks_and_index(gwas_id)
             gwas, phewas = self.read_gwas(gwas_id, query_out_path)
+            # self.write_gwas(gwas_id, gwas, output_dir)
+            # n_chunks = self.save_chunks_and_index(gwas_id)
+
+            # phewas
+            n_chunks = -1
+            self.save_phewas(gwas_id, id_n, phewas)
 
             # tophits
-            for params in [{
-                'pval': self.tophits_pval,
-                'kb': self.tophits_kb,
-                'r2': self.tophits_r2
-            }, {
-                'pval': self.tophits_wide_pval,
-                'kb': self.tophits_wide_kb,
-                'r2': self.tophits_wide_r2
-            }]:
-                tophits_path = self.extract_vcf_tophits(gwas_id, vcf_path, temp_dir, params)
-                clumped_rsids_path = self.clump_tophits(gwas_id, tophits_path, params)
-                if clumped_rsids_path != '':  # only proceed if there are significant clump results
-                    query_out_path = self.extract_vcf_by_rsids(gwas_id, vcf_path, temp_dir, clumped_rsids_path, bcftools_query_string, awk_print_string, params)
-                    gwas = self.read_tophits(gwas_id, query_out_path, params)
-                    self.write_tophits(gwas_id, gwas, output_dir, params)
-                    self.save_tophits(gwas_id, output_dir, params)
+            # for params in [{
+            #     'pval': self.tophits_pval,
+            #     'kb': self.tophits_kb,
+            #     'r2': self.tophits_r2
+            # }, {
+            #     'pval': self.tophits_wide_pval,
+            #     'kb': self.tophits_wide_kb,
+            #     'r2': self.tophits_wide_r2
+            # }]:
+            #     tophits_path = self.extract_vcf_tophits(gwas_id, vcf_path, temp_dir, params)
+            #     clumped_rsids_path = self.clump_tophits(gwas_id, tophits_path, params)
+            #     if clumped_rsids_path != '':  # only proceed if there are significant clump results
+            #         query_out_path = self.extract_vcf_by_rsids(gwas_id, vcf_path, temp_dir, clumped_rsids_path, bcftools_query_string, awk_print_string, params)
+            #         gwas = self.read_tophits(gwas_id, query_out_path, params)
+            #         self.write_tophits(gwas_id, gwas, output_dir, params)
+            #         self.save_tophits(gwas_id, output_dir, params)
 
             self.cleanup(gwas_id)
         except Exception as e:

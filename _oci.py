@@ -14,14 +14,15 @@ class OCI:
         self.buckets = {
             'data': os.environ['OCI_BUCKET_DATA'],
             'data-chunks': os.environ['OCI_BUCKET_DATA_CHUNKS'],
-            'tophits': os.environ['OCI_BUCKET_TOPHITS']
+            'phewas': os.environ['OCI_BUCKET_PHEWAS'],
+            'tophits': os.environ['OCI_BUCKET_TOPHITS'],
         }
         config = {
             "user": os.environ['OCI_USER'],
             "fingerprint": os.environ['OCI_FINGERPRINT'],
             "tenancy": os.environ['OCI_TENANCY'],
             "region": os.environ['OCI_REGION'],
-            "key_file": os.environ['OCI_KEY_FILE']
+            "key_file": os.environ['OCI_KEY_FILE'],
         }
         oci.config.validate_config(config)
         self.object_storage_client = oci.object_storage.ObjectStorageClient(config)

@@ -182,7 +182,7 @@ class GWASIndexing:
                 #     # rsid, ea,  nea,  eaf,  beta, se,   pval, ss
                 # )
                 if float(l[8]) < self.phewas_pval:
-                    phewas[l[0].lstrip('0')][f"{l[1]}:{l[3]}:{l[4]}"] = [
+                    phewas[l[0].lstrip('0')][f"{l[1]}:{l[3][:255]}:{l[4][:255]}"] = [
                         int(l[2].lstrip('rs')) if l[2].startswith('rs') else None,  # rsid_int
                         float(l[5]) if l[5] != '' else None,  # eaf
                         float(l[6]) if l[6] != '' else None,  # beta
@@ -259,34 +259,59 @@ class GWASIndexing:
         logging.debug(f"Uploaded {gwas_id}")
         return len(file_list)
 
-    def save_phewas(self, gwas_id: str, id_n: str, phewas: dict, mysql_conn: mysql.connector.connect) -> None:
+    def write_and_upload_phewas(self, gwas_id: str, phewas: dict, output_dir: str) -> None:
         """
-        Save the PheWAS data to Redis
+        Write the PheWAS to a temporary file and upload to OCI
+        :param gwas_id: GWAS ID
+        :param phewas: PheWAS results (by chr then pos:ea:nea)
+        :return:
+        """
+        phewas_path = f"{output_dir}/phewas"
+        logging.debug(f"Writing and uploading {gwas_id} phewas")
+
+        with gzip.open(phewas_path, 'wb') as f:
+            pickle.dump(phewas, f)
+        logging.debug(f"Written {gwas_id} phewas")
+
+        with open(phewas_path, 'rb') as f:
+            oci_instance.object_storage_upload('phewas', f"{gwas_id}", f)
+        logging.debug(f"Uploaded {gwas_id} phewas")
+
+    @retry(tries=60, delay=20)
+    def insert_phewas(self, gwas_id: str, id_n: str, output_dir: str, mysql_conn: mysql.connector.connect) -> None:
+        """
+        Insert the PheWAS data to MySQL
         :param gwas_id: GWAS ID
         :param id_n: id(n) of the GwasInfo node
         :param phewas: Dictionary of PheWAS data (by chr then pos:ea:nea)
         :return:
         """
+        phewas_path = f"{output_dir}/phewas"
+        logging.debug(f"Inserting {gwas_id} phewas")
+
         t = time.time()
         n_rows = 0
-        for chr in phewas.keys():
-            rows = []
-            for pos_alleles, assoc in phewas[chr].items():
-                pos_alleles = pos_alleles.split(':')
-                rows.append((id_n, assoc[0], chr, pos_alleles[0], pos_alleles[1], pos_alleles[2],
-                             assoc[1], assoc[2], assoc[3], assoc[4], assoc[5]))
-            sql = "INSERT INTO `phewas` (gwas_id_n, rsid_int, chr, pos, ea, nea, eaf, beta, se, pval, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-            try:
-                cursor = mysql_conn.cursor()
-                cursor.executemany(sql, rows)
-                mysql_conn.commit()
-                cursor.close()
-            except Exception as e:
-                logging.error(traceback.format_exc())
-                raise e
-            n_rows += len(rows)
 
-        logging.debug(f"Saved PheWAS of {gwas_id}: {n_rows} ({round(time.time() - t, 3)} s)")
+        with gzip.open(phewas_path, 'rb') as f:
+            phewas = pickle.loads(f.read())
+            for chr in phewas.keys():
+                rows = []
+                for pos_alleles, assoc in phewas[chr].items():
+                    pos_alleles = pos_alleles.split(':')
+                    rows.append((id_n, assoc[0], chr, pos_alleles[0], pos_alleles[1], pos_alleles[2],
+                                 assoc[1], assoc[2], assoc[3], assoc[4], assoc[5]))
+                sql = "INSERT INTO `phewas` (gwas_id_n, rsid_int, chr, pos, ea, nea, eaf, beta, se, pval, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                try:
+                    cursor = mysql_conn.cursor()
+                    cursor.executemany(sql, rows)
+                    mysql_conn.commit()
+                    cursor.close()
+                except Exception as e:
+                    logging.error(traceback.format_exc())
+                    raise e
+                n_rows += len(rows)
+
+        logging.debug(f"Inserted PheWAS of {gwas_id}: {n_rows} ({round(time.time() - t, 3)} s)")
 
     def extract_vcf_tophits(self, gwas_id: str, vcf_path: str, temp_dir: str, params: dict) -> str:
         """
@@ -394,9 +419,9 @@ class GWASIndexing:
         logging.debug(f"Read bcf {gwas_id} tophits for {suffix}")
         return gwas
 
-    def write_tophits(self, gwas_id: str, gwas: list, output_dir: str, params: dict) -> None:
+    def write_and_upload_tophits(self, gwas_id: str, gwas: list, output_dir: str, params: dict) -> None:
         """
-        Write the tophits to a temporary file
+        Write the tophits to a temporary file and upload to OCI
         :param gwas_id: GWAS ID
         :param gwas: List of tophits
         :param output_dir: Output directory for the tophits file
@@ -404,29 +429,30 @@ class GWASIndexing:
         :return:
         """
         suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
-        output_path = f"{output_dir}/tophits.{suffix}"
+        tophits_path = f"{output_dir}/tophits.{suffix}"
         logging.debug(f"Writing {gwas_id} tophits {suffix}")
 
-        with gzip.open(output_path, 'wb') as f:
+        with gzip.open(tophits_path, 'wb') as f:
             pickle.dump(gwas, f)
         logging.debug(f"Written {gwas_id} tophits {suffix}")
 
-    def save_tophits(self, gwas_id: str, output_dir: str, params: dict) -> None:
+        with open(tophits_path, 'rb') as f:
+            oci_instance.object_storage_upload('tophits', f"{gwas_id}/{suffix}", f)
+        logging.debug(f"Uploaded {gwas_id} tophits {suffix}")
+
+    def insert_tophits(self, gwas_id: str, output_dir: str, params: dict) -> None:
         """
-        Upload the tophits to OCI and Redis
+        Insert the tophits to Redis
         :param gwas_id: GWAS ID
         :param output_dir: Full path to the tophits file
         :param params: Parameters used for extracting and clumping tophits
         :return:
         """
         suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
-        output_path = f"{output_dir}/tophits.{suffix}"
-        logging.debug(f"Uploading {gwas_id} tophits for {suffix}")
+        tophits_path = f"{output_dir}/tophits.{suffix}"
+        logging.debug(f"Inserting {gwas_id} tophits for {suffix}")
 
-        with open(output_path, 'rb') as f:
-            oci_instance.object_storage_upload('tophits', f"{gwas_id}/{suffix}", f)
-
-        with gzip.open(output_path, 'rb') as f:
+        with gzip.open(tophits_path, 'rb') as f:
             tophits = pickle.loads(f.read())
             members_and_scores = {}
             for t in tophits:
@@ -435,7 +461,7 @@ class GWASIndexing:
                 members_and_scores[':'.join(t)] = score
             self.redis[suffix].zadd(gwas_id, members_and_scores)
 
-        logging.debug(f"Uploaded {gwas_id} tophits for {suffix}")
+        logging.debug(f"Inserted {gwas_id} tophits for {suffix}")
 
     def cleanup(self, gwas_id: str) -> None:
         """
@@ -485,7 +511,8 @@ class GWASIndexing:
 
             # phewas
             n_chunks = -1
-            self.save_phewas(gwas_id, id_n, phewas, mysql_conn)
+            self.write_and_upload_phewas(gwas_id, phewas, output_dir)
+            self.insert_phewas(gwas_id, id_n, output_dir, mysql_conn)
 
             # tophits
             # for params in [{
@@ -502,8 +529,8 @@ class GWASIndexing:
             #     if clumped_rsids_path != '':  # only proceed if there are significant clump results
             #         query_out_path = self.extract_vcf_by_rsids(gwas_id, vcf_path, temp_dir, clumped_rsids_path, bcftools_query_string, awk_print_string, params)
             #         gwas = self.read_tophits(gwas_id, query_out_path, params)
-            #         self.write_tophits(gwas_id, gwas, output_dir, params)
-            #         self.save_tophits(gwas_id, output_dir, params)
+            #         self.write_and_upload_tophits(gwas_id, gwas, output_dir, params)
+            #         self.insert_tophits(gwas_id, output_dir, params)
 
             self.cleanup(gwas_id)
         except Exception as e:

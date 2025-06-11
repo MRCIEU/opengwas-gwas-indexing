@@ -2,6 +2,7 @@ import gzip
 import logging
 import math
 import multiprocessing
+import mysql.connector
 import os
 import pickle
 import queue
@@ -36,8 +37,13 @@ class GWASIndexing:
             'tasks': redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=0),
             '5e-8_10000_0.001': redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=1),
             '1e-5_1000_0.8': redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=2),
-            'phewas_chr_posalleles': redis.Redis(host=os.environ['REDIS_2_HOST_' + _env], port=os.environ['REDIS_2_PORT_' + _env], password=os.environ['REDIS_2_PASS_' + _env], db=1),
-            'phewas_cpallales_gwasid': redis.Redis(host=os.environ['REDIS_2_HOST_' + _env], port=os.environ['REDIS_2_PORT_' + _env], password=os.environ['REDIS_2_PASS_' + _env], db=2)
+        }
+        self.mysql_config = {
+            'host': os.environ['MYSQL_HOST_' + _env],
+            'port': os.environ['MYSQL_PORT_' + _env],
+            'user': os.environ['MYSQL_USER_' + _env],
+            'password': os.environ['MYSQL_PASS_' + _env],
+            'database': os.environ['MYSQL_DB_' + _env],
         }
 
         self.input_dir_local = os.environ['INPUT_DIR_VCF_' + _env]
@@ -160,12 +166,12 @@ class GWASIndexing:
         """
         Read the temporary file, store the data in chunks and filter out records that will be used in PheWAS
         :param gwas_id: GWAS ID
-        :param query_out_path: Full path to temporary file produced by bcftools
+        :param query_out_path: Full path to the temporary file produced by bcftools
         :return: Dictionary of GWAS data (by chromosome and then position prefix)
             and dictonary of PheWAS data (by chr:pos:ea:nea)
         """
         gwas = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-        phewas = {}
+        phewas = defaultdict(lambda: defaultdict(list))
         logging.debug(f"Reading bcf {gwas_id}")
         with gzip.open(query_out_path) as f:
             for line in f:
@@ -175,7 +181,13 @@ class GWASIndexing:
                 #     # rsid, ea,  nea,  af,   beta, se,   pval, ss
                 # )
                 if float(l[8]) < self.phewas_pval:
-                    phewas[f"{l[0].lstrip('0')}:{l[1]}:{l[3]}:{l[4]}"] = float(l[8])
+                    phewas[l[0].lstrip('0')][f"{l[1]}:{l[3]}:{l[4]}"] = \
+                        [l[2].lstrip('rs'),
+                         float(l[5]) if l[5] != '' else None,
+                         float(l[6]) if l[6] != '' else None,
+                         float(l[7]) if l[7] != '' else None,
+                         float(l[8]) if l[8] != '' else None,
+                         l[9]]
 
         # for chr in gwas.keys():
         #     for pos_prefix in gwas[chr].keys():
@@ -245,36 +257,30 @@ class GWASIndexing:
         logging.debug(f"Uploaded {gwas_id}")
         return len(file_list)
 
-    def save_phewas(self, gwas_id: str, id_n: str, phewas: dict) -> None:
+    def save_phewas(self, gwas_id: str, id_n: str, phewas: dict, mysql_conn: mysql.connector.connect) -> None:
         """
         Save the PheWAS data to Redis
         :param gwas_id: GWAS ID
         :param id_n: id(n) of the GwasInfo node
-        :param phewas: Dictionary of PheWAS data (by chr:pos:ea:nea)
+        :param phewas: Dictionary of PheWAS data (by chr then pos:ea:nea)
         :return:
         """
-        chr_posalleles = defaultdict(list)
-        posalleles_pval = {}
-        for chr_pos_ea_oa, pval in phewas.items():
-            chr, pos, ea, oa = chr_pos_ea_oa.split(':')
-            chr_posalleles[chr].append((pos, ea, oa))
-            posalleles_pval[chr_pos_ea_oa] = pval
         t = time.time()
+        n_rows = 0
+        for chr in phewas.keys():
+            rows = []
+            for pos_alleles, assoc in phewas[chr].items():
+                pos_alleles = pos_alleles.split(':')
+                rows.append((id_n, assoc[0], chr, pos_alleles[0], pos_alleles[1], pos_alleles[2],
+                             assoc[1], assoc[2], assoc[3], assoc[4], assoc[5]))
+            sql = "INSERT INTO `phewas` (gwas_id_n, rsid_int, chr, pos, ea, nea, eaf, beta, se, pval, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+            cursor = mysql_conn.cursor()
+            cursor.executemany(sql, rows)
+            mysql_conn.commit()
+            cursor.close()
+            n_rows += len(rows)
 
-        pipe = self.redis['phewas_chr_posalleles'].pipeline()
-        for chr, pos_ea_oa_tuples in chr_posalleles.items():
-            pipe.zadd(chr, {'{}:{}:{}'.format(peo[0], peo[1], peo[2]): peo[0] for peo in pos_ea_oa_tuples})
-        r1 = pipe.execute()
-        success_chr_posalleles = sum(1 for r in r1 if r > 0)
-        t2 = time.time()
-
-        pipe = self.redis['phewas_cpallales_gwasid'].pipeline()
-        for chr_pos_ea_oa, pval in posalleles_pval.items():
-            pipe.zadd(chr_pos_ea_oa, {id_n: pval})
-        r2 = pipe.execute()
-        success_cpallales_gwasid = sum(1 for r in r2 if r > 0)
-
-        logging.debug(f"Saved PheWAS of {gwas_id}: {success_chr_posalleles} ({round(t2 - t, 3)} s), {success_cpallales_gwasid} ({round(time.time() - t2, 3)} s)")
+        logging.debug(f"Saved PheWAS of {gwas_id}: {n_rows} ({round(time.time() - t, 3)} s)")
 
     def extract_vcf_tophits(self, gwas_id: str, vcf_path: str, temp_dir: str, params: dict) -> str:
         """
@@ -447,12 +453,12 @@ class GWASIndexing:
         self.redis['tasks'].srem('tasks_pending', gwas_id)
         if successful:
             self.redis['tasks'].zadd('tasks_completed', {gwas_id: n_chunks})
-            logging.info('Reported {} as completed with {} docs'.format(gwas_id, n_chunks))
+            logging.info(f"Reported {gwas_id} as completed with {n_chunks} chunks")
         else:
             self.redis['tasks'].zadd('tasks_failed', {gwas_id: int(time.time())})
-            logging.info('Reported {} as failed'.format(gwas_id))
+            logging.info(f"Reported {gwas_id} as failed")
 
-    def run_for_single_dataset(self, id_n_and_gwas_id: str) -> (bool, int):
+    def run_for_single_dataset(self, id_n_and_gwas_id: str, mysql_conn: mysql.connector.connect()) -> (bool, int):
         """
         For a single GWAS dataset, fetch files, extract VCF, generate chunk and index files, upload to OCI and cleanup
         :param id_n_and_gwas_id: id(n) and GWAS ID e.g. 315919:ieu-a-2
@@ -473,7 +479,7 @@ class GWASIndexing:
 
             # phewas
             n_chunks = -1
-            self.save_phewas(gwas_id, id_n, phewas)
+            self.save_phewas(gwas_id, id_n, phewas, mysql_conn)
 
             # tophits
             # for params in [{
@@ -509,18 +515,19 @@ def gwas_indexing_worker(proc_id: int, queue: multiprocessing.Queue) -> None:
     """
     logging.info(f"Process {proc_id} started")
     gi = GWASIndexing()
+    mysql_conn = mysql.connector.connect(**gi.mysql_config)
     tp = time.time()
 
     def _run(id_n_and_gwas_id):
         t0 = time.time()
-        successful, n_chunks = gi.run_for_single_dataset(id_n_and_gwas_id)
+        successful, n_chunks = gi.run_for_single_dataset(id_n_and_gwas_id, mysql_conn)
         gi.report_task_status_to_redis(id_n_and_gwas_id, successful, n_chunks)
-        logging.info('Task {} completed in {} s'.format(id_n_and_gwas_id, str(round(time.time() - t0, 3))))
+        logging.info(f"Task {id_n_and_gwas_id} completed in {round(time.time() - t0, 3)} s")
 
     while True:
         task = queue.get()
         if not task:
-            logging.info('Process {} ended in {} s'.format(proc_id, str(round(time.time() - tp, 3))))
+            logging.info(f"Process {proc_id} ended in {round(time.time() - tp, 3)} s")
             break
         i, id_n_and_gwas_id = task
         _run(id_n_and_gwas_id)

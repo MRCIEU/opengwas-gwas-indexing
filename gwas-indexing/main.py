@@ -109,7 +109,7 @@ class GWASIndexing:
             shutil.rmtree(dataset_path, ignore_errors=True)
             os.makedirs(dataset_path)
             vcf_path = f"{dataset_path}/{gwas_id}.vcf.gz"
-            logging.debug('Downloading', gwas_id)
+            logging.debug(f"Downloading {gwas_id}")
             with open(vcf_path, 'wb') as f:
                 f.write(oci_instance.object_storage_download('data', f"{gwas_id}/{gwas_id}.vcf.gz").data.content)
             with open(f"{vcf_path}.tbi", 'wb') as f:
@@ -174,21 +174,22 @@ class GWASIndexing:
         gwas = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
         phewas = defaultdict(lambda: defaultdict(list))
         logging.debug(f"Reading bcf {gwas_id}")
-        with gzip.open(query_out_path) as f:
+        with (gzip.open(query_out_path) as f):
             for line in f:
                 l = ['' if x == '.' else x for x in line.rstrip().decode('utf-8').split(' ')]
                 # gwas[l[0].lstrip('0')][int(l[1]) // self.chunk_size][int(l[1])].append(
                 #     [l[2], l[3], l[4], l[5], l[6], l[7], l[8], l[9]]
-                #     # rsid, ea,  nea,  af,   beta, se,   pval, ss
+                #     # rsid, ea,  nea,  eaf,  beta, se,   pval, ss
                 # )
                 if float(l[8]) < self.phewas_pval:
-                    phewas[l[0].lstrip('0')][f"{l[1]}:{l[3]}:{l[4]}"] = \
-                        [l[2].lstrip('rs'),
-                         float(l[5]) if l[5] != '' else None,
-                         float(l[6]) if l[6] != '' else None,
-                         float(l[7]) if l[7] != '' else None,
-                         float(l[8]) if l[8] != '' else None,
-                         l[9]]
+                    phewas[l[0].lstrip('0')][f"{l[1]}:{l[3]}:{l[4]}"] = [
+                        int(l[2].lstrip('rs')) if l[2].startswith('rs') else None,  # rsid_int
+                        float(l[5]) if l[5] != '' else None,  # eaf
+                        float(l[6]) if l[6] != '' else None,  # beta
+                        float(l[7]) if l[7] != '' else None,  # se
+                        float(l[8]) if l[8] != '' else None,  # pval
+                        l[9]
+                    ]
 
         # for chr in gwas.keys():
         #     for pos_prefix in gwas[chr].keys():
@@ -275,10 +276,14 @@ class GWASIndexing:
                 rows.append((id_n, assoc[0], chr, pos_alleles[0], pos_alleles[1], pos_alleles[2],
                              assoc[1], assoc[2], assoc[3], assoc[4], assoc[5]))
             sql = "INSERT INTO `phewas` (gwas_id_n, rsid_int, chr, pos, ea, nea, eaf, beta, se, pval, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-            cursor = mysql_conn.cursor()
-            cursor.executemany(sql, rows)
-            mysql_conn.commit()
-            cursor.close()
+            try:
+                cursor = mysql_conn.cursor()
+                cursor.executemany(sql, rows)
+                mysql_conn.commit()
+                cursor.close()
+            except Exception as e:
+                logging.error(traceback.format_exc())
+                raise e
             n_rows += len(rows)
 
         logging.debug(f"Saved PheWAS of {gwas_id}: {n_rows} ({round(time.time() - t, 3)} s)")
@@ -565,6 +570,7 @@ if __name__ == '__main__':
     n_proc = int(os.environ['N_PROC'])
     while True:
         tasks = gi.list_pending_tasks_in_redis()
+        tasks = ['326650:ukb-b-18279']
         # tasks = ['315919:ieu-a-2']
         if len(tasks) > 0:
             mqueue = multiprocessing.Queue()

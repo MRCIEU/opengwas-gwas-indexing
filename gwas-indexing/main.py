@@ -197,7 +197,7 @@ class GWASIndexing:
         #     gwas[chr] = dict(sorted(gwas[chr].items()))
 
         logging.debug(f"Read bcf {gwas_id}")
-        return dict(sorted(gwas.items())), phewas
+        return dict(sorted(gwas.items())), dict(sorted(phewas.items()))
 
     def write_gwas(self, gwas_id: str, gwas: dict, output_dir: str) -> None:
         """

@@ -25,6 +25,7 @@ from _oci import OCI
 load_dotenv()
 
 logging.basicConfig(format='%(asctime)s %(levelname)s: %(message)s', level=os.environ['LOGGING_LEVEL'])
+logging.getLogger("mysql.connector").setLevel(logging.WARNING)
 
 
 oci_instance = OCI()

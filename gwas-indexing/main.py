@@ -102,6 +102,8 @@ class GWASIndexing:
         :return: Full path to the .vcf.gz file
         """
         vcf_path = f"{self.input_dir_local}/{gwas_id}/{gwas_id}.vcf.gz"
+        output_dir_curr = f"{self.output_dir}/{gwas_id}"
+
         logging.debug(f"Fetching {gwas_id}")
 
         if not os.path.exists(vcf_path) or not os.path.exists(vcf_path + '.tbi'):
@@ -120,10 +122,10 @@ class GWASIndexing:
 
         if check_phewas:
             try:
-                phewas_path = f"{output_dir}/phewas"
-                with open(f"{phewas_path}", 'wb') as f:
+                with open(f"{output_dir_curr}/phewas", 'wb') as f:
                     f.write(oci_instance.object_storage_download('phewas', f"{gwas_id}").data.content)
                 has_phewas = True
+                print(os.listdir(f"{output_dir_curr}"))
             except Exception as e:
                 pass
 
@@ -139,8 +141,7 @@ class GWASIndexing:
                     'r2': self.tophits_wide_r2
                 }]:
                     suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
-                    tophits_path = f"{output_dir}/tophits.{suffix}"
-                    with open(f"{tophits_path}", 'wb') as f:
+                    with open(f"{output_dir_curr}/tophits.{suffix}", 'wb') as f:
                         f.write(oci_instance.object_storage_download('tophits', f"{gwas_id}/{suffix}").data.content)
                 has_tophits = True
             except Exception as e:
@@ -196,7 +197,7 @@ class GWASIndexing:
         logging.debug(f"Extracted {gwas_id}")
         return query_out_path
 
-    def read_gwas(self, gwas_id: str, query_out_path: str) -> (dict, dict):
+    def read_gwas(self, gwas_id: str, query_out_path: str, action: str) -> dict | list:
         """
         Read the temporary file, store the data in chunks and filter out records that will be used in PheWAS
         :param gwas_id: GWAS ID
@@ -204,33 +205,35 @@ class GWASIndexing:
         :return: Dictionary of GWAS data (by chromosome and then position prefix)
             and dictonary of PheWAS data (by chr:pos:ea:nea)
         """
-        gwas = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-        phewas = defaultdict(lambda: defaultdict(list))
         logging.debug(f"Reading bcf {gwas_id}")
-        with (gzip.open(query_out_path) as f):
-            for line in f:
-                l = ['' if x == '.' else x for x in line.rstrip().decode('utf-8').split(' ')]
-                # gwas[l[0].lstrip('0')][int(l[1]) // self.chunk_size][int(l[1])].append(
-                #     [l[2], l[3], l[4], l[5], l[6], l[7], l[8], l[9]]
-                #     # rsid, ea,  nea,  eaf,  beta, se,   pval, ss
-                # )
-                if float(l[8]) < self.phewas_pval:
-                    phewas[l[0].lstrip('0')][f"{l[1]}:{l[3][:255]}:{l[4][:255]}"] = [
-                        int(l[2].lstrip('rs')) if l[2].startswith('rs') else None,  # rsid_int
-                        float(l[5]) if l[5] != '' else None,  # eaf
-                        float(l[6]) if l[6] != '' else None,  # beta
-                        float(l[7]) if l[7] != '' else None,  # se
-                        float(l[8]) if l[8] != '' else None,  # pval
-                        l[9]
-                    ]
 
-        # for chr in gwas.keys():
-        #     for pos_prefix in gwas[chr].keys():
-        #         gwas[chr][pos_prefix] = dict(sorted(gwas[chr][pos_prefix].items()))
-        #     gwas[chr] = dict(sorted(gwas[chr].items()))
+        if action == 'assoc':
+            results = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+            with (gzip.open(query_out_path) as f):
+                for line in f:
+                    l = ['' if x == '.' else x for x in line.rstrip().decode('utf-8').split(' ')]
+                    results[l[0].lstrip('0')][int(l[1]) // self.chunk_size][int(l[1])].append(
+                        [l[2], l[3], l[4], l[5], l[6], l[7], l[8], l[9]]
+                        # rsid, ea,  nea,  eaf,  beta, se,   pval, ss
+                        # Note that 'rsid' here could also be something like 1_1234567890_G_A
+                    )
+            for chr in results.keys():
+                for pos_prefix in results[chr].keys():
+                    results[chr][pos_prefix] = dict(sorted(results[chr][pos_prefix].items()))
+                results[chr] = dict(sorted(results[chr].items()))
+            results = dict(sorted(results.items()))
+
+        elif action == 'phewas':
+            results = []
+            with (gzip.open(query_out_path) as f):
+                for line in f:
+                    l = ['' if x == '.' else x for x in line.rstrip().decode('utf-8').split(' ')]
+                    if float(l[8]) < self.phewas_pval:
+                        results.append(l)
 
         logging.debug(f"Read bcf {gwas_id}")
-        return dict(sorted(gwas.items())), dict(sorted(phewas.items()))
+
+        return results
 
     def write_gwas(self, gwas_id: str, gwas: dict, output_dir: str) -> None:
         """
@@ -240,7 +243,7 @@ class GWASIndexing:
         :param output_dir: Output directory for this dataset
         :return: None
         """
-        output_path = output_dir
+        output_path = f"{output_dir}/assoc"
         logging.debug(f"Writing {gwas_id}")
 
         pos_prefix_index = defaultdict(list)
@@ -261,7 +264,7 @@ class GWASIndexing:
         :param gwas_id: GWAS ID
         :return: Number of chunks
         """
-        file_list = os.listdir(f"{self.output_dir}/{gwas_id}")
+        file_list = os.listdir(f"{self.output_dir}/{gwas_id}/assoc")
         if not file_list:
             logging.error(f"FAILED No files found for {gwas_id}")
             raise Exception(f"FAILED No files found for {gwas_id}")
@@ -292,11 +295,11 @@ class GWASIndexing:
         logging.debug(f"Uploaded {gwas_id}")
         return len(file_list)
 
-    def write_and_upload_phewas(self, gwas_id: str, phewas: dict, output_dir: str) -> None:
+    def write_and_upload_phewas(self, gwas_id: str, phewas: list, output_dir: str) -> None:
         """
         Write the PheWAS to a temporary file and upload to OCI
         :param gwas_id: GWAS ID
-        :param phewas: PheWAS results (by chr then pos:ea:nea)
+        :param phewas: List of associations used for PheWAS
         :return:
         """
         phewas_path = f"{output_dir}/phewas"
@@ -316,7 +319,7 @@ class GWASIndexing:
         Insert the PheWAS data to MySQL
         :param gwas_id: GWAS ID
         :param id_n: id(n) of the GwasInfo node
-        :param phewas: Dictionary of PheWAS data (by chr then pos:ea:nea)
+        :param phewas: List of associations used for PheWAS
         :return: Number of rows inserted
         """
         phewas_path = f"{output_dir}/phewas"
@@ -325,26 +328,30 @@ class GWASIndexing:
         t = time.time()
         n_rows = 0
 
+        cursor = mysql_conn.cursor()
+
         with gzip.open(phewas_path, 'rb') as f:
             phewas = pickle.loads(f.read())
-            for chr in phewas.keys():
-                rows = []
-                for pos_alleles, assoc in phewas[chr].items():
-                    pos_alleles = pos_alleles.split(':')
-                    rows.append((id_n, assoc[0], chr, pos_alleles[0], pos_alleles[1], pos_alleles[2],
-                                 assoc[1], assoc[2], assoc[3], assoc[4], assoc[5]))
-                sql = "INSERT INTO `phewas` (gwas_id_n, rsid_int, chr, pos, ea, nea, eaf, beta, se, pval, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-                try:
-                    cursor = mysql_conn.cursor()
-                    cursor.executemany(sql, rows)
-                    mysql_conn.commit()
-                    cursor.close()
-                except Exception as e:
-                    logging.error(traceback.format_exc())
-                    raise e
+            queries_by_chr = defaultdict(list)
+            for assoc in phewas:
+                chr_id = {'X': 23, 'Y': 24, 'MT': 25}.get(assoc[0], int(assoc[0]))
+                queries_by_chr[assoc[0]].append((
+                    id_n, assoc[2], chr_id, assoc[1], assoc[3], assoc[4],
+                    assoc[5] if assoc[5] != '' else None,
+                    assoc[6] if assoc[6] != '' else None,
+                    assoc[7] if assoc[7] != '' else None,
+                    assoc[8] if assoc[8] != '' else None,
+                    assoc[9]
+                ))
+            for rows in queries_by_chr.values():
+                sql = "INSERT INTO `phewas` (gwas_id_n, snp_id, chr_id, pos, ea, nea, eaf, beta, se, pval, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                cursor.executemany(sql, rows)
+                mysql_conn.commit()
                 n_rows += len(rows)
 
         logging.debug(f"Inserted PheWAS of {gwas_id}: {n_rows} ({round(time.time() - t, 3)} s)")
+
+        cursor.close()
 
         return n_rows
 
@@ -459,12 +466,12 @@ class GWASIndexing:
         Write the tophits to a temporary file and upload to OCI
         :param gwas_id: GWAS ID
         :param gwas: List of tophits
-        :param output_dir: Output directory for the tophits file
+        :param output_dir: Base output directory
         :param params: Parameters used for extracting and clumping tophits
         :return:
         """
         suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
-        tophits_path = f"{output_dir}/tophits.{suffix}"
+        tophits_path = f"{output_dir}/{gwas_id}/tophits.{suffix}"
         logging.debug(f"Writing {gwas_id} tophits {suffix}")
 
         with gzip.open(tophits_path, 'wb') as f:
@@ -479,12 +486,12 @@ class GWASIndexing:
         """
         Insert the tophits to Redis
         :param gwas_id: GWAS ID
-        :param output_dir: Full path to the tophits file
+        :param output_dir: Base output directory
         :param params: Parameters used for extracting and clumping tophits
         :return: Number of tophits inserted
         """
         suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
-        tophits_path = f"{output_dir}/tophits.{suffix}"
+        tophits_path = f"{output_dir}/{gwas_id}/tophits.{suffix}"
         logging.debug(f"Inserting {gwas_id} tophits for {suffix}")
 
         with gzip.open(tophits_path, 'rb') as f:
@@ -541,23 +548,24 @@ class GWASIndexing:
             check_precomputed_phewas = True
             check_precomputed_tophits = True
 
+            temp_dir, output_dir = self.setup(gwas_id)
+
             vcf_path, has_phewas, has_tophits = self.fetch_files(gwas_id, self.output_dir, check_precomputed_phewas, check_precomputed_tophits)
             n_records = -1
 
             bcftools_query_string, awk_print_string = self.get_query_and_print_string(vcf_path)
-            temp_dir, output_dir = self.setup(gwas_id)
 
             # assoc and phewas
             if action == 'assoc' or (action == 'phewas' and not has_phewas):
                 query_out_path = self.extract_vcf(gwas_id, vcf_path, temp_dir, bcftools_query_string, awk_print_string)
-                gwas, phewas = self.read_gwas(gwas_id, query_out_path)
+                results = self.read_gwas(gwas_id, query_out_path, action)
 
                 if action == 'assoc':
-                    self.write_gwas(gwas_id, gwas, output_dir)
+                    self.write_gwas(gwas_id, results, output_dir)
                     n_records = self.upload_chunks_and_index(gwas_id)
 
                 if action == 'phewas':
-                    self.write_and_upload_phewas(gwas_id, phewas, output_dir)
+                    self.write_and_upload_phewas(gwas_id, results, output_dir)
 
             if action == 'phewas':  # phewas must have been generated
                 n_records = self.insert_phewas(gwas_id, id_n, output_dir, mysql_conn)
@@ -631,7 +639,7 @@ def file_upload_worker(gwas_id: str, thread_id: int, queue: queue.Queue) -> None
 
     @retry(tries=-1, delay=3)
     def _upload(gwas_id, i, filename):
-        with open(f"{output_dir}/{gwas_id}/{filename}", 'rb') as f:
+        with open(f"{output_dir}/{gwas_id}/assoc/{filename}", 'rb') as f:
             oci_instance.object_storage_upload('data-chunks', f"{gwas_id}/{filename}", f)
         logging.debug(f"Uploading {gwas_id}, chunk {i}")
 

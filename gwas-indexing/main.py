@@ -95,7 +95,7 @@ class GWASIndexing:
 
         return temp_dir, output_dir
 
-    def fetch_files(self, gwas_id: str) -> str:
+    def fetch_files(self, gwas_id: str, output_dir: str, check_phewas=False, check_tophits=False) -> tuple[str, bool, bool]:
         """
         Fetch the VCF and TBI files locally, or from OCI
         :param gwas_id: GWAS ID
@@ -115,7 +115,40 @@ class GWASIndexing:
             with open(f"{vcf_path}.tbi", 'wb') as f:
                 f.write(oci_instance.object_storage_download('data', f"{gwas_id}/{gwas_id}.vcf.gz.tbi").data.content)
 
-        return vcf_path
+        has_phewas = False
+        has_tophits = False
+
+        if check_phewas:
+            try:
+                phewas_path = f"{output_dir}/phewas"
+                with open(f"{phewas_path}", 'wb') as f:
+                    f.write(oci_instance.object_storage_download('phewas', f"{gwas_id}").data.content)
+                has_phewas = True
+            except Exception as e:
+                pass
+
+        if check_tophits:
+            try:
+                for params in [{
+                    'pval': self.tophits_pval,
+                    'kb': self.tophits_kb,
+                    'r2': self.tophits_r2
+                }, {
+                    'pval': self.tophits_wide_pval,
+                    'kb': self.tophits_wide_kb,
+                    'r2': self.tophits_wide_r2
+                }]:
+                    suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
+                    tophits_path = f"{output_dir}/tophits.{suffix}"
+                    with open(f"{tophits_path}", 'wb') as f:
+                        f.write(oci_instance.object_storage_download('tophits', f"{gwas_id}/{suffix}").data.content)
+                has_tophits = True
+            except Exception as e:
+                pass
+
+        logging.debug(f"Fetching {gwas_id} {'phewas' if has_phewas else ''} {'tophits' if has_tophits else ''}")
+
+        return vcf_path, has_phewas, has_tophits
 
     def get_query_and_print_string(self, vcf_path: str) -> str:
         """
@@ -222,7 +255,7 @@ class GWASIndexing:
             pickle.dump(pos_prefix_index, f)
         logging.debug(f"Written {gwas_id}")
 
-    def save_chunks_and_index(self, gwas_id) -> int:
+    def upload_chunks_and_index(self, gwas_id) -> int:
         """
         Upload the GWAS chunks to OCI and save the index to Redis
         :param gwas_id: GWAS ID
@@ -278,13 +311,13 @@ class GWASIndexing:
         logging.debug(f"Uploaded {gwas_id} phewas")
 
     @retry(tries=60, delay=20)
-    def insert_phewas(self, gwas_id: str, id_n: str, output_dir: str, mysql_conn: mysql.connector.connect) -> None:
+    def insert_phewas(self, gwas_id: str, id_n: str, output_dir: str, mysql_conn: mysql.connector.connect) -> int:
         """
         Insert the PheWAS data to MySQL
         :param gwas_id: GWAS ID
         :param id_n: id(n) of the GwasInfo node
         :param phewas: Dictionary of PheWAS data (by chr then pos:ea:nea)
-        :return:
+        :return: Number of rows inserted
         """
         phewas_path = f"{output_dir}/phewas"
         logging.debug(f"Inserting {gwas_id} phewas")
@@ -312,6 +345,8 @@ class GWASIndexing:
                 n_rows += len(rows)
 
         logging.debug(f"Inserted PheWAS of {gwas_id}: {n_rows} ({round(time.time() - t, 3)} s)")
+
+        return n_rows
 
     def extract_vcf_tophits(self, gwas_id: str, vcf_path: str, temp_dir: str, params: dict) -> str:
         """
@@ -440,13 +475,13 @@ class GWASIndexing:
             oci_instance.object_storage_upload('tophits', f"{gwas_id}/{suffix}", f)
         logging.debug(f"Uploaded {gwas_id} tophits {suffix}")
 
-    def insert_tophits(self, gwas_id: str, output_dir: str, params: dict) -> None:
+    def insert_tophits(self, gwas_id: str, output_dir: str, params: dict) -> int:
         """
         Insert the tophits to Redis
         :param gwas_id: GWAS ID
         :param output_dir: Full path to the tophits file
         :param params: Parameters used for extracting and clumping tophits
-        :return:
+        :return: Number of tophits inserted
         """
         suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
         tophits_path = f"{output_dir}/tophits.{suffix}"
@@ -462,6 +497,8 @@ class GWASIndexing:
             self.redis[suffix].zadd(gwas_id, members_and_scores)
 
         logging.debug(f"Inserted {gwas_id} tophits for {suffix}")
+
+        return len(tophits)
 
     def cleanup(self, gwas_id: str) -> None:
         """
@@ -490,53 +527,69 @@ class GWASIndexing:
             self.redis['tasks'].zadd('tasks_failed', {gwas_id: int(time.time())})
             logging.info(f"Reported {gwas_id} as failed")
 
-    def run_for_single_dataset(self, id_n_and_gwas_id: str, mysql_conn: mysql.connector.connect()) -> (bool, int):
+    def run_for_single_dataset(self, task_description: str, mysql_conn: mysql.connector.connect()) -> (bool, int):
         """
-        For a single GWAS dataset, fetch files, extract VCF, generate chunk and index files, upload to OCI and cleanup
-        :param id_n_and_gwas_id: id(n) and GWAS ID e.g. 315919:ieu-a-2
+        For a single GWAS dataset, fetch files, extract VCF, perform actions (generate chunk and index files, phewas, tophits), upload to OCI and cleanup
+        :param task_description: id(n), GWAS ID and action e.g. 315919:ieu-a-2:assoc
         :return: task status and number of chunks
         """
         try:
-            id_n, gwas_id = id_n_and_gwas_id.split(':', 1)
+            id_n, gwas_id, action = task_description.split(':', 2)
+            if action not in ['assoc', 'phewas', 'tophits']:
+                raise ValueError(f"Invalid action {action}")
 
-            vcf_path = self.fetch_files(gwas_id)
+            check_precomputed_phewas = True
+            check_precomputed_tophits = True
+
+            vcf_path, has_phewas, has_tophits = self.fetch_files(gwas_id, self.output_dir, check_precomputed_phewas, check_precomputed_tophits)
+            n_records = -1
+
             bcftools_query_string, awk_print_string = self.get_query_and_print_string(vcf_path)
             temp_dir, output_dir = self.setup(gwas_id)
 
-            # all associations
-            query_out_path = self.extract_vcf(gwas_id, vcf_path, temp_dir, bcftools_query_string, awk_print_string)
-            gwas, phewas = self.read_gwas(gwas_id, query_out_path)
-            # self.write_gwas(gwas_id, gwas, output_dir)
-            # n_chunks = self.save_chunks_and_index(gwas_id)
+            # assoc and phewas
+            if action == 'assoc' or (action == 'phewas' and not has_phewas):
+                query_out_path = self.extract_vcf(gwas_id, vcf_path, temp_dir, bcftools_query_string, awk_print_string)
+                gwas, phewas = self.read_gwas(gwas_id, query_out_path)
 
-            # phewas
-            n_chunks = -1
-            self.write_and_upload_phewas(gwas_id, phewas, output_dir)
-            self.insert_phewas(gwas_id, id_n, output_dir, mysql_conn)
+                if action == 'assoc':
+                    self.write_gwas(gwas_id, gwas, output_dir)
+                    n_records = self.upload_chunks_and_index(gwas_id)
+
+                if action == 'phewas':
+                    self.write_and_upload_phewas(gwas_id, phewas, output_dir)
+
+            if action == 'phewas':  # phewas must have been generated
+                n_records = self.insert_phewas(gwas_id, id_n, output_dir, mysql_conn)
+                pass
 
             # tophits
-            # for params in [{
-            #     'pval': self.tophits_pval,
-            #     'kb': self.tophits_kb,
-            #     'r2': self.tophits_r2
-            # }, {
-            #     'pval': self.tophits_wide_pval,
-            #     'kb': self.tophits_wide_kb,
-            #     'r2': self.tophits_wide_r2
-            # }]:
-            #     tophits_path = self.extract_vcf_tophits(gwas_id, vcf_path, temp_dir, params)
-            #     clumped_rsids_path = self.clump_tophits(gwas_id, tophits_path, params)
-            #     if clumped_rsids_path != '':  # only proceed if there are significant clump results
-            #         query_out_path = self.extract_vcf_by_rsids(gwas_id, vcf_path, temp_dir, clumped_rsids_path, bcftools_query_string, awk_print_string, params)
-            #         gwas = self.read_tophits(gwas_id, query_out_path, params)
-            #         self.write_and_upload_tophits(gwas_id, gwas, output_dir, params)
-            #         self.insert_tophits(gwas_id, output_dir, params)
+            if action == 'tophits':
+                for params in [{
+                    'pval': self.tophits_pval,
+                    'kb': self.tophits_kb,
+                    'r2': self.tophits_r2
+                }, {
+                    'pval': self.tophits_wide_pval,
+                    'kb': self.tophits_wide_kb,
+                    'r2': self.tophits_wide_r2
+                }]:
+                    if has_tophits:
+                        n_records = self.insert_tophits(gwas_id, output_dir, params)
+                    else:
+                        tophits_path = self.extract_vcf_tophits(gwas_id, vcf_path, temp_dir, params)
+                        clumped_rsids_path = self.clump_tophits(gwas_id, tophits_path, params)
+                        if clumped_rsids_path != '':  # only proceed if there are significant clump results
+                            query_out_path = self.extract_vcf_by_rsids(gwas_id, vcf_path, temp_dir, clumped_rsids_path, bcftools_query_string, awk_print_string, params)
+                            gwas = self.read_tophits(gwas_id, query_out_path, params)
+                            self.write_and_upload_tophits(gwas_id, gwas, output_dir, params)
+                            n_records = self.insert_tophits(gwas_id, output_dir, params)
 
             self.cleanup(gwas_id)
         except Exception as e:
             logging.error(traceback.format_exc())
             return False, 0
-        return True, n_chunks
+        return True, n_records
 
 
 def gwas_indexing_worker(proc_id: int, queue: multiprocessing.Queue) -> None:

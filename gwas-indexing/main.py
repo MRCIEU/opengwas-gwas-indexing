@@ -511,7 +511,7 @@ class GWASIndexing:
         shutil.rmtree(f"{self.temp_dir}/{gwas_id}", ignore_errors=True)
         shutil.rmtree(f"{self.output_dir}/{gwas_id}", ignore_errors=True)
 
-    def report_task_status_to_redis(self, gwas_id: str, successful: bool, n_chunks: int) -> None:
+    def report_task_status_to_redis(self, gwas_id: str, successful: bool, n_records: int) -> None:
         """
         Remove a task from 'tasks_pending' and add it to 'tasks_completed' or 'tasks_failed'
         :param gwas_id: the full GWAS ID
@@ -521,8 +521,8 @@ class GWASIndexing:
         """
         self.redis['tasks'].srem('tasks_pending', gwas_id)
         if successful:
-            self.redis['tasks'].zadd('tasks_completed', {gwas_id: n_chunks})
-            logging.info(f"Reported {gwas_id} as completed with {n_chunks} chunks")
+            self.redis['tasks'].hset('tasks_completed', gwas_id, str(n_records))
+            logging.info(f"Reported {gwas_id} as completed with {n_records} records")
         else:
             self.redis['tasks'].zadd('tasks_failed', {gwas_id: int(time.time())})
             logging.info(f"Reported {gwas_id} as failed")

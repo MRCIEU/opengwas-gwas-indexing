@@ -336,7 +336,8 @@ class GWASIndexing:
             for assoc in phewas:
                 chr_id = {'X': 23, 'Y': 24, 'MT': 25}.get(assoc[0], assoc[0])
                 queries_by_chr[assoc[0]].append((
-                    id_n, assoc[2], int(chr_id), assoc[1], assoc[3], assoc[4],
+                    id_n, assoc[2], int(chr_id), assoc[1],
+                    assoc[3][:255], assoc[4][:255],  # ea, nea
                     assoc[5] if assoc[5] != '' else None,
                     assoc[6] if assoc[6] != '' else None,
                     assoc[7] if assoc[7] != '' else None,

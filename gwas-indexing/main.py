@@ -334,17 +334,17 @@ class GWASIndexing:
             phewas = pickle.loads(f.read())
             queries_by_chr = defaultdict(list)
             for assoc in phewas:
-                chr_id = {'X': 23, 'Y': 24, 'MT': 25}.get(assoc[0], int(assoc[0]))
+                chr_id = {'X': 23, 'Y': 24, 'MT': 25}.get(assoc[0], assoc[0])
                 queries_by_chr[assoc[0]].append((
-                    id_n, assoc[2], chr_id, assoc[1], assoc[3], assoc[4],
+                    id_n, assoc[2], int(chr_id), assoc[1], assoc[3], assoc[4],
                     assoc[5] if assoc[5] != '' else None,
                     assoc[6] if assoc[6] != '' else None,
                     assoc[7] if assoc[7] != '' else None,
                     assoc[8] if assoc[8] != '' else None,
                     assoc[9]
                 ))
+            sql = "INSERT INTO `phewas` (gwas_id_n, snp_id, chr_id, pos, ea, nea, eaf, beta, se, pval, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
             for rows in queries_by_chr.values():
-                sql = "INSERT INTO `phewas` (gwas_id_n, snp_id, chr_id, pos, ea, nea, eaf, beta, se, pval, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                 cursor.executemany(sql, rows)
                 mysql_conn.commit()
                 n_rows += len(rows)

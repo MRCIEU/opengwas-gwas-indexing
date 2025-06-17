@@ -125,7 +125,6 @@ class GWASIndexing:
                 with open(f"{output_dir_curr}/phewas", 'wb') as f:
                     f.write(oci_instance.object_storage_download('phewas', f"{gwas_id}").data.content)
                 has_phewas = True
-                print(os.listdir(f"{output_dir_curr}"))
             except Exception as e:
                 pass
 

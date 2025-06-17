@@ -569,7 +569,7 @@ class GWASIndexing:
                     self.write_and_upload_phewas(gwas_id, results, output_dir)
 
             if action == 'phewas':  # phewas must have been generated
-                n_records = self.insert_phewas(gwas_id, id_n, output_dir, mysql_conn)
+                # n_records = self.insert_phewas(gwas_id, id_n, output_dir, mysql_conn)
                 pass
 
             # tophits

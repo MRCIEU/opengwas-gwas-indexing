@@ -45,6 +45,7 @@ class GWASIndexing:
             'user': os.environ['MYSQL_USER_' + _env],
             'password': os.environ['MYSQL_PASS_' + _env],
             'database': os.environ['MYSQL_DB_' + _env],
+            'connection_timeout': 10,
         }
 
         self.input_dir_local = os.environ['INPUT_DIR_VCF_' + _env]

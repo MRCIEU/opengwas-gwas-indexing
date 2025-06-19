@@ -11,6 +11,9 @@ RUN mkdir -p /ref && cd /ref && wget http://fileserve.mrcieu.ac.uk/ld/data_maf0.
 COPY ./requirements.txt /requirements.txt
 RUN python -m pip install -r /requirements.txt
 
-COPY ./gwas-indexing _oci.py /gwas-indexing/
+RUN apk add autossh openssh-client
 
-ENTRYPOINT ["python", "/gwas-indexing/main.py"]
+COPY ./gwas-indexing _oci.py start.sh /gwas-indexing/
+
+RUN chmod +x /gwas-indexing/start.sh
+CMD ["/gwas-indexing/start.sh"]

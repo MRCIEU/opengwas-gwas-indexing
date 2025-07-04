@@ -342,7 +342,7 @@ class GWASIndexing:
                     assoc[5] if assoc[5] != '' else None,
                     assoc[6] if assoc[6] != '' else None,
                     assoc[7] if assoc[7] != '' else None,
-                    -math.log10(assoc[8]) if assoc[8] != '' else None,
+                    -math.log10(float(assoc[8])) if assoc[8] != '' else None,
                     assoc[9]
                 ))
             sql = "INSERT INTO `phewas` (gwas_id_n, snp_id, chr_id, pos, ea, nea, eaf, beta, se, lp, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
@@ -514,7 +514,7 @@ class GWASIndexing:
                     assoc[5] if assoc[5] != '' else None,
                     assoc[6] if assoc[6] != '' else None,
                     assoc[7] if assoc[7] != '' else None,
-                    -math.log10(assoc[8]) if assoc[8] != '' else None,
+                    -math.log10(float(assoc[8])) if assoc[8] != '' else None,
                     assoc[9]
                 ))
             sql = f"INSERT INTO `tophits_{suffix}` (gwas_id_n, snp_id, chr_id, pos, ea, nea, eaf, beta, se, lp, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
@@ -678,7 +678,7 @@ if __name__ == '__main__':
     n_proc = int(os.environ['N_PROC'])
     while True:
         tasks = gi.list_pending_tasks_in_redis()
-        # tasks = ['315919:ieu-a-2']
+        tasks = ['315919:ieu-a-2:phewas']
         if len(tasks) > 0:
             mqueue = multiprocessing.Queue()
             for i, id_n_and_gwas_id in enumerate(tasks):

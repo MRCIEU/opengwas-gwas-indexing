@@ -319,7 +319,8 @@ class GWASIndexing:
         Insert the PheWAS data to MySQL
         :param gwas_id: GWAS ID
         :param id_n: id(n) of the GwasInfo node
-        :param phewas: List of associations used for PheWAS
+        :param output_dir: Output directory for this dataset
+        :param mysql_conn: MySQL connection object
         :return: Number of rows inserted
         """
         phewas_path = f"{output_dir}/phewas"
@@ -341,10 +342,10 @@ class GWASIndexing:
                     assoc[5] if assoc[5] != '' else None,
                     assoc[6] if assoc[6] != '' else None,
                     assoc[7] if assoc[7] != '' else None,
-                    assoc[8] if assoc[8] != '' else None,
+                    -math.log10(assoc[8]) if assoc[8] != '' else None,
                     assoc[9]
                 ))
-            sql = "INSERT INTO `phewas` (gwas_id_n, snp_id, chr_id, pos, ea, nea, eaf, beta, se, pval, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+            sql = "INSERT INTO `phewas` (gwas_id_n, snp_id, chr_id, pos, ea, nea, eaf, beta, se, lp, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
             for rows in queries_by_chr.values():
                 cursor.executemany(sql, rows)
                 mysql_conn.commit()
@@ -483,28 +484,46 @@ class GWASIndexing:
             oci_instance.object_storage_upload('tophits', f"{gwas_id}/{suffix}", f)
         logging.debug(f"Uploaded {gwas_id} tophits {suffix}")
 
-    def insert_tophits(self, gwas_id: str, output_dir: str, params: dict) -> int:
+    @retry(tries=60, delay=20)
+    def insert_tophits(self, gwas_id: str, id_n: str, output_dir: str, params: dict, mysql_conn: mysql.connector.connect) -> int:
         """
         Insert the tophits to Redis
         :param gwas_id: GWAS ID
+        :param id_n: id(n) of the GwasInfo node
         :param output_dir: Base output directory
         :param params: Parameters used for extracting and clumping tophits
+        :param mysql_conn: MySQL connection object
         :return: Number of tophits inserted
         """
         suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
-        tophits_path = f"{output_dir}/{gwas_id}/tophits.{suffix}"
+        tophits_path = f"{output_dir}/tophits.{suffix}"
         logging.debug(f"Inserting {gwas_id} tophits for {suffix}")
+
+        t = time.time()
+
+        cursor = mysql_conn.cursor()
 
         with gzip.open(tophits_path, 'rb') as f:
             tophits = pickle.loads(f.read())
-            members_and_scores = {}
-            for t in tophits:
-                score = float(t[8])
-                del t[8]
-                members_and_scores[':'.join(t)] = score
-            self.redis[suffix].zadd(gwas_id, members_and_scores)
+            rows = []
+            for assoc in tophits:
+                chr_id = {'X': 23, 'Y': 24, 'MT': 25}.get(assoc[0], assoc[0])
+                rows.append((
+                    id_n, assoc[2], int(chr_id), assoc[1],
+                    assoc[3][:255], assoc[4][:255],  # ea, nea
+                    assoc[5] if assoc[5] != '' else None,
+                    assoc[6] if assoc[6] != '' else None,
+                    assoc[7] if assoc[7] != '' else None,
+                    -math.log10(assoc[8]) if assoc[8] != '' else None,
+                    assoc[9]
+                ))
+            sql = f"INSERT INTO `tophits_{suffix}` (gwas_id_n, snp_id, chr_id, pos, ea, nea, eaf, beta, se, lp, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+            cursor.executemany(sql, rows)
+            mysql_conn.commit()
 
-        logging.debug(f"Inserted {gwas_id} tophits for {suffix}")
+        logging.debug(f"Inserted tophits {suffix} of {gwas_id}: {len(rows)} ({round(time.time() - t, 3)} s)")
+
+        cursor.close()
 
         return len(tophits)
 
@@ -584,7 +603,7 @@ class GWASIndexing:
                     'r2': self.tophits_wide_r2
                 }]:
                     if has_tophits:
-                        n_records = self.insert_tophits(gwas_id, output_dir, params)
+                        n_records = self.insert_tophits(gwas_id, id_n, output_dir, params, mysql_conn)
                     else:
                         tophits_path = self.extract_vcf_tophits(gwas_id, vcf_path, temp_dir, params)
                         clumped_rsids_path = self.clump_tophits(gwas_id, tophits_path, params)
@@ -592,7 +611,7 @@ class GWASIndexing:
                             query_out_path = self.extract_vcf_by_rsids(gwas_id, vcf_path, temp_dir, clumped_rsids_path, bcftools_query_string, awk_print_string, params)
                             gwas = self.read_tophits(gwas_id, query_out_path, params)
                             self.write_and_upload_tophits(gwas_id, gwas, output_dir, params)
-                            n_records = self.insert_tophits(gwas_id, output_dir, params)
+                            n_records = self.insert_tophits(gwas_id, id_n, output_dir, params, mysql_conn)
 
             self.cleanup(gwas_id)
         except Exception as e:

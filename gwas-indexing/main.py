@@ -678,7 +678,7 @@ if __name__ == '__main__':
     n_proc = int(os.environ['N_PROC'])
     while True:
         tasks = gi.list_pending_tasks_in_redis()
-        tasks = ['315919:ieu-a-2:phewas']
+        # tasks = ['315919:ieu-a-2:phewas']
         if len(tasks) > 0:
             mqueue = multiprocessing.Queue()
             for i, id_n_and_gwas_id in enumerate(tasks):

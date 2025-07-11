@@ -250,7 +250,7 @@ class GWASIndexing:
         for chr in gwas.keys():
             pos_prefix_index[chr] = list(set(gwas[chr].keys()))
             for pos_prefix in gwas[chr].keys():
-                with gzip.open(output_path + f"/{chr}_{pos_prefix}", 'wb') as f:
+                with gzip.open(output_path + f"/assoc/{chr}_{pos_prefix}", 'wb') as f:
                     pickle.dump(gwas[chr][pos_prefix], f)
         pos_prefix_index = dict(pos_prefix_index)
 

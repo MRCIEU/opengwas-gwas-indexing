@@ -347,7 +347,7 @@ class GWASIndexing:
                         assoc[9]
                     ))
             except Exception as e:
-                print(e)
+                print(gwas_id, assoc, e)
             sql = "INSERT INTO `phewas` (gwas_id_n, snp_id, chr_id, pos, ea, nea, eaf, beta, se, lp, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
             for rows in queries_by_chr.values():
                 cursor.executemany(sql, rows)

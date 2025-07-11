@@ -343,7 +343,7 @@ class GWASIndexing:
                         assoc[5] if assoc[5] != '' else None,
                         assoc[6] if assoc[6] != '' else None,
                         assoc[7] if assoc[7] != '' else None,
-                        None if assoc[8] == '' else 999999 if assoc['8'] == '0' else -math.log10(float(assoc[8])),
+                        None if assoc[8] == '' else 999999 if assoc[8] == '0' else -math.log10(float(assoc[8])),
                         assoc[9]
                     ))
             except Exception as e:

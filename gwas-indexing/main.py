@@ -244,13 +244,14 @@ class GWASIndexing:
         :return: None
         """
         output_path = f"{output_dir}/assoc"
+        os.makedirs(output_path, exist_ok=True)
         logging.debug(f"Writing {gwas_id}")
 
         pos_prefix_index = defaultdict(list)
         for chr in gwas.keys():
             pos_prefix_index[chr] = list(set(gwas[chr].keys()))
             for pos_prefix in gwas[chr].keys():
-                with gzip.open(output_path + f"/assoc/{chr}_{pos_prefix}", 'wb') as f:
+                with gzip.open(output_path + f"/{chr}_{pos_prefix}", 'wb') as f:
                     pickle.dump(gwas[chr][pos_prefix], f)
         pos_prefix_index = dict(pos_prefix_index)
 

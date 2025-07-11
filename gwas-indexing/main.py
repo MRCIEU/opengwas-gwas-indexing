@@ -334,17 +334,20 @@ class GWASIndexing:
         with gzip.open(phewas_path, 'rb') as f:
             phewas = pickle.loads(f.read())
             queries_by_chr = defaultdict(list)
-            for assoc in phewas:
-                chr_id = {'X': 23, 'Y': 24, 'MT': 25}.get(assoc[0], assoc[0])
-                queries_by_chr[assoc[0]].append((
-                    id_n, assoc[2], int(chr_id), assoc[1],
-                    assoc[3][:255], assoc[4][:255],  # ea, nea
-                    assoc[5] if assoc[5] != '' else None,
-                    assoc[6] if assoc[6] != '' else None,
-                    assoc[7] if assoc[7] != '' else None,
-                    -math.log10(float(assoc[8])) if assoc[8] != '' else None,
-                    assoc[9]
-                ))
+            try:
+                for assoc in phewas:
+                    chr_id = {'X': 23, 'Y': 24, 'MT': 25}.get(assoc[0], assoc[0])
+                    queries_by_chr[assoc[0]].append((
+                        id_n, assoc[2], int(chr_id), assoc[1],
+                        assoc[3][:255], assoc[4][:255],  # ea, nea
+                        assoc[5] if assoc[5] != '' else None,
+                        assoc[6] if assoc[6] != '' else None,
+                        assoc[7] if assoc[7] != '' else None,
+                        None if assoc[8] == '' else 999999 if assoc['8'] == '0' else -math.log10(float(assoc[8])),
+                        assoc[9]
+                    ))
+            except Exception as e:
+                print(e)
             sql = "INSERT INTO `phewas` (gwas_id_n, snp_id, chr_id, pos, ea, nea, eaf, beta, se, lp, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
             for rows in queries_by_chr.values():
                 cursor.executemany(sql, rows)

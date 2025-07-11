@@ -509,17 +509,20 @@ class GWASIndexing:
         with gzip.open(tophits_path, 'rb') as f:
             tophits = pickle.loads(f.read())
             rows = []
-            for assoc in tophits:
-                chr_id = {'X': 23, 'Y': 24, 'MT': 25}.get(assoc[0], assoc[0])
-                rows.append((
-                    id_n, assoc[2], int(chr_id), assoc[1],
-                    assoc[3][:255], assoc[4][:255],  # ea, nea
-                    assoc[5] if assoc[5] != '' else None,
-                    assoc[6] if assoc[6] != '' else None,
-                    assoc[7] if assoc[7] != '' else None,
-                    -math.log10(float(assoc[8])) if assoc[8] != '' else None,
-                    assoc[9]
-                ))
+            try:
+                for assoc in tophits:
+                    chr_id = {'X': 23, 'Y': 24, 'MT': 25}.get(assoc[0], assoc[0])
+                    rows.append((
+                        id_n, assoc[2], int(chr_id), assoc[1],
+                        assoc[3][:255], assoc[4][:255],  # ea, nea
+                        assoc[5] if assoc[5] != '' else None,
+                        assoc[6] if assoc[6] != '' else None,
+                        assoc[7] if assoc[7] != '' else None,
+                        None if assoc[8] == '' else 999999 if assoc[8] == '0' else -math.log10(float(assoc[8])),
+                        assoc[9]
+                    ))
+            except Exception as e:
+                print(gwas_id, assoc, e)
             sql = f"INSERT INTO `tophits_{suffix}` (gwas_id_n, snp_id, chr_id, pos, ea, nea, eaf, beta, se, lp, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
             cursor.executemany(sql, rows)
             mysql_conn.commit()

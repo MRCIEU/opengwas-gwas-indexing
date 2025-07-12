@@ -477,7 +477,7 @@ class GWASIndexing:
         :return:
         """
         suffix = f"{params['pval']}_{params['kb']}_{params['r2']}"
-        tophits_path = f"{output_dir}/{gwas_id}/tophits.{suffix}"
+        tophits_path = f"{output_dir}/tophits.{suffix}"
         logging.debug(f"Writing {gwas_id} tophits {suffix}")
 
         with gzip.open(tophits_path, 'wb') as f:

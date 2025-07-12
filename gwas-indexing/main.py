@@ -349,11 +349,12 @@ class GWASIndexing:
                     ))
             except Exception as e:
                 print(gwas_id, assoc, e)
-            sql = "INSERT INTO `phewas` (gwas_id_n, snp_id, chr_id, pos, ea, nea, eaf, beta, se, lp, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-            for rows in queries_by_chr.values():
-                cursor.executemany(sql, rows)
-                mysql_conn.commit()
-                n_rows += len(rows)
+            if len(queries_by_chr) > 0:
+                sql = "INSERT INTO `phewas` (gwas_id_n, snp_id, chr_id, pos, ea, nea, eaf, beta, se, lp, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                for rows in queries_by_chr.values():
+                    cursor.executemany(sql, rows)
+                    mysql_conn.commit()
+                    n_rows += len(rows)
 
         logging.debug(f"Inserted PheWAS of {gwas_id}: {n_rows} ({round(time.time() - t, 3)} s)")
 
@@ -524,9 +525,10 @@ class GWASIndexing:
                     ))
             except Exception as e:
                 print(gwas_id, assoc, e)
-            sql = f"INSERT INTO `tophits_{suffix}` (gwas_id_n, snp_id, chr_id, pos, ea, nea, eaf, beta, se, lp, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-            cursor.executemany(sql, rows)
-            mysql_conn.commit()
+            if len(rows) > 0:
+                sql = f"INSERT INTO `tophits_{suffix}` (gwas_id_n, snp_id, chr_id, pos, ea, nea, eaf, beta, se, lp, ss) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                cursor.executemany(sql, rows)
+                mysql_conn.commit()
 
         logging.debug(f"Inserted tophits {suffix} of {gwas_id}: {len(rows)} ({round(time.time() - t, 3)} s)")
 

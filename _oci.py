@@ -38,7 +38,8 @@ class OCI:
                 namespace_name=os.environ['OCI_NAMESPACE'],
                 bucket_name=self.buckets[bucket_key],
                 prefix=prefix,
-                start=start
+                start=start,
+                fields='size',
             )
             results.extend([o.name for o in r.data.objects])
             if not r.data.next_start_with:

@@ -254,8 +254,8 @@ create table if not exists opengwas.phewas
 create index phewas_idx_gwas_id_n
     on opengwas.phewas (gwas_id_n);
 
-# create index phewas_idx_cpalleles
-#     on opengwas.phewas (chr_id, pos, ea, nea);
+-- create index phewas_idx_cpalleles
+--     on opengwas.phewas (chr_id, pos, ea, nea);
 
 
 create table opengwas.`tophits_5e-8_10000_0.001`
@@ -299,7 +299,7 @@ create index tophits_idx_gwas_id_n
     on opengwas.`tophits_1e-5_1000_0.8` (gwas_id_n);
 
 
-# Check number of records in total in phewas
+-- Check number of records in total in phewas
 SELECT
     sum(TABLE_ROWS)
 FROM
@@ -309,7 +309,7 @@ WHERE
     AND TABLE_NAME = 'phewas';
 
 
-# Check number of records by partitions in phewas
+-- Check number of records by partitions in phewas
 SELECT
     PARTITION_NAME,
     TABLE_ROWS
@@ -320,7 +320,7 @@ WHERE
     AND TABLE_NAME = 'phewas';
 
 
-# Check number of records by chr in phewas
+-- Check number of records by chr in phewas
 SELECT
     SUBSTRING_INDEX(PARTITION_NAME, '_', 2) AS partition_prefix,
     SUM(TABLE_ROWS) AS total_rows
@@ -335,16 +335,16 @@ ORDER BY
     partition_prefix;
 
 
-# Importing:
-# Upgrade service instance to 24C 96G
-# Change resources limits to 22C 90G in docker compose yml
-# Upgrade OCI Block Volume to Higher performance (VPU/GB:20) i.e. 50k IOPS, 614 MB/s
-# Takes 2 hours
+-- Importing:
+-- Upgrade service instance to 24C 96G
+-- Change resources limits to 22C 90G in docker compose yml
+-- Upgrade OCI Block Volume to Higher performance (VPU/GB:20) i.e. 50k IOPS, 614 MB/s
+-- Takes 2 hours
 
-# Indexing:
-# Downgrade service instance to 8C 32G
-# Upgrade OCI Block Volume to Balanced performance (VPU/GB:10) i.e. 25k IOPS, 480 MB/s
-# Takes 6+ hours
+-- Indexing:
+-- Downgrade service instance to 8C 32G
+-- Upgrade OCI Block Volume to Balanced performance (VPU/GB:10) i.e. 25k IOPS, 480 MB/s
+-- Takes 6+ hours
 
 
 PURGE BINARY LOGS TO '';

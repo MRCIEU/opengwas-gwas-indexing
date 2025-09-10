@@ -1,5 +1,7 @@
 SET GLOBAL max_connections = 500;
 
+ALTER INSTANCE DISABLE INNODB REDO_LOG;
+
 create table if not exists opengwas.phewas
 (
     id        bigint unsigned auto_increment,
@@ -331,3 +333,20 @@ GROUP BY
     partition_prefix
 ORDER BY
     partition_prefix;
+
+
+# Importing:
+# Upgrade service instance to 24C 96G
+# Change resources limits to 22C 90G in docker compose yml
+# Upgrade OCI Block Volume to Higher performance (VPU/GB:20) i.e. 50k IOPS, 614 MB/s
+# Takes 2 hours
+
+# Indexing:
+# Downgrade service instance to 8C 32G
+# Upgrade OCI Block Volume to Balanced performance (VPU/GB:10) i.e. 25k IOPS, 480 MB/s
+# Takes 6+ hours
+
+
+PURGE BINARY LOGS TO '';
+
+ALTER INSTANCE ENABLE INNODB REDO_LOG;

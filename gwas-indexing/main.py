@@ -6,6 +6,7 @@ import mysql.connector
 import os
 import pickle
 import queue
+import requests
 import threading
 import traceback
 
@@ -58,7 +59,10 @@ class GWASIndexing:
 
         self.bcftools = os.environ['BCFTOOLS_BINARY_' + _env]
         self.plink = os.environ['PLINK_BINARY_' + _env]
+        # TODO: Should use EUR instead of legacy
         self.plink_ref = os.environ['PLINK_REF_' + _env]
+
+        self.heartbeat_url = os.environ['HEARTBEAT_URL']
 
         self.chunk_size = 10_000_000
         self.phewas_pval = 0.01
@@ -71,13 +75,17 @@ class GWASIndexing:
         self.tophits_wide_kb = '1000'
         self.tophits_wide_r2 = '0.8'
 
+    def heartbeat(self):
+        req = requests.get(self.heartbeat_url)
+        return req.status_code
+
     def list_pending_tasks_in_redis(self) -> list:
         """
         Fetch list of GWAS IDs from Redis
         :return: List of GWAS IDs
         """
         tasks = self.redis['tasks'].smembers('tasks_pending')
-        logging.info('Number of pending tasks: ' + str(len(tasks)))
+        logging.info(f"Number of pending tasks: {str(len(tasks))}; Heartbeat response: {str(self.heartbeat())}")
         return [t.decode('ascii') for t in tasks]
 
     def setup(self, gwas_id: str) -> (str, str):
@@ -562,6 +570,7 @@ class GWASIndexing:
         else:
             self.redis['tasks'].zadd('tasks_failed', {gwas_id: int(time.time())})
             logging.info(f"Reported {gwas_id} as failed")
+        self.heartbeat()
 
     def run_for_single_dataset(self, task_description: str, mysql_conn: mysql.connector.connect()) -> (bool, int):
         """

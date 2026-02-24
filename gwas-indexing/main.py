@@ -102,7 +102,7 @@ class GWASIndexing:
 
         return temp_dir, output_dir
 
-    def fetch_files(self, gwas_id: str, output_dir: str, check_phewas=False, check_tophits=False) -> tuple[str, bool, bool]:
+    def fetch_files(self, gwas_id: str, check_phewas=False, check_tophits=False) -> tuple[str, bool, bool]:
         """
         Fetch the VCF and TBI files locally, or from OCI
         :param gwas_id: GWAS ID
@@ -586,7 +586,7 @@ class GWASIndexing:
 
             temp_dir, output_dir = self.setup(gwas_id)
 
-            vcf_path, has_phewas, has_tophits = self.fetch_files(gwas_id, self.output_dir, check_precomputed_phewas, check_precomputed_tophits)
+            vcf_path, has_phewas, has_tophits = self.fetch_files(gwas_id, check_precomputed_phewas, check_precomputed_tophits)
             n_records = -1
 
             bcftools_query_string, awk_print_string = self.get_query_and_print_string(vcf_path)

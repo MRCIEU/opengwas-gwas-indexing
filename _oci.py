@@ -26,8 +26,8 @@ class OCI:
         }
         oci.config.validate_config(config)
         self.object_storage_client = oci.object_storage.ObjectStorageClient(config)
-        self.object_storage_client.base_client.session.adapters['http://'].poolmanager.connection_pool_kw['maxsize'] = 100
-        self.object_storage_client.base_client.session.adapters['https://'].poolmanager.connection_pool_kw['maxsize'] = 100
+        self.object_storage_client.base_client.session.adapters['http://'].poolmanager.connection_pool_kw['maxsize'] = 200
+        self.object_storage_client.base_client.session.adapters['https://'].poolmanager.connection_pool_kw['maxsize'] = 200
 
     def object_storage_list(self, bucket_key, prefix):
         results = []

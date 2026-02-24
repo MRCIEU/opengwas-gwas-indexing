@@ -26,8 +26,8 @@ class OCI:
         }
         oci.config.validate_config(config)
         self.object_storage_client = oci.object_storage.ObjectStorageClient(config)
-        self.object_storage_client.base_client.session.adapters['http://'].poolmanager.connection_pool_kw['maxsize'] = 100
-        self.object_storage_client.base_client.session.adapters['https://'].poolmanager.connection_pool_kw['maxsize'] = 100
+        self.object_storage_client.base_client.session.adapters['http://'].poolmanager.connection_pool_kw['maxsize'] = 500
+        self.object_storage_client.base_client.session.adapters['https://'].poolmanager.connection_pool_kw['maxsize'] = 500
 
     def object_storage_list(self, bucket_key, prefix):
         results = []
@@ -49,26 +49,19 @@ class OCI:
         return results
 
     def object_storage_upload(self, bucket_key, object_name, object_body):
-        response = self.object_storage_client.put_object(
+        return self.object_storage_client.put_object(
             namespace_name=os.environ['OCI_NAMESPACE'],
             bucket_name=self.buckets[bucket_key],
             object_name=object_name,
             put_object_body=object_body,
         )
-        # Explicitly close the response to release the connection back to the pool
-        if hasattr(response, 'close'):
-            response.close()
-        return response
 
     def object_storage_delete(self, bucket_key, object_name):
-        response = self.object_storage_client.delete_object(
+        return self.object_storage_client.delete_object(
             namespace_name=os.environ['OCI_NAMESPACE'],
             bucket_name=self.buckets[bucket_key],
             object_name=object_name
         )
-        if hasattr(response, 'close'):
-            response.close()
-        return response
 
     def object_storage_delete_by_prefix(self, bucket_key, prefix):
         object_names = self.object_storage_list(bucket_key, prefix)
